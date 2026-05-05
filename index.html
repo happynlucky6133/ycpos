@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1D9E75">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="YCPos">
+<meta name="description" content="YCPos 库存管理系统">
+<title>YCPos 库存系统</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div>
+      <div class="header-title">YCPos 库存</div>
+      <div class="header-sub" id="sync-time">正在加载...</div>
+    </div>
+    <button class="sync-btn" id="sync-btn">↻ 刷新</button>
+  </div>
+
+  <div class="content">
+    <!-- 主页 -->
+    <div class="page active" id="page-dashboard">
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-label">产品总类</div><div class="stat-value" id="s-products">-</div></div>
+        <div class="stat-card"><div class="stat-label">总库存</div><div class="stat-value" id="s-stock">- <span class="stat-unit">kg</span></div></div>
+        <div class="stat-card"><div class="stat-label">进货记录</div><div class="stat-value" id="s-stockin">-</div></div>
+        <div class="stat-card"><div class="stat-label">供应商</div><div class="stat-value" id="s-suppliers">-</div></div>
+      </div>
+      <div class="section-title">库存概览</div>
+      <div id="dash-products"><div class="loading">加载中...</div></div>
+      <div class="section-title">最近进货</div>
+      <div id="dash-recent"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 产品 -->
+    <div class="page" id="page-products">
+      <div class="search-wrap">
+        <span style="font-size:16px;color:var(--text2)">🔍</span>
+        <input type="text" placeholder="搜索产品..." id="product-search">
+      </div>
+      <div id="product-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 进货 -->
+    <div class="page" id="page-stockin">
+      <div class="section-title">进货记录</div>
+      <div id="stockin-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 订单 -->
+    <div class="page" id="page-orders">
+      <div class="section-title">采购订单</div>
+      <div id="orders-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 客户 -->
+    <div class="page" id="page-customers">
+      <div class="search-wrap">
+        <span style="font-size:16px;color:var(--text2)">🔍</span>
+        <input type="text" placeholder="搜索客户..." id="customer-search">
+      </div>
+      <div id="customer-list"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <button class="nav-btn active" data-page="dashboard"><span class="nav-icon">🏠</span>主页</button>
+    <button class="nav-btn" data-page="products"><span class="nav-icon">📦</span>产品</button>
+    <button class="nav-btn" data-page="stockin"><span class="nav-icon">📥</span>进货</button>
+    <button class="nav-btn" data-page="orders"><span class="nav-icon">📋</span>订单</button>
+    <button class="nav-btn" data-page="customers"><span class="nav-icon">👥</span>客户</button>
+  </div>
+</div>
+
+<button class="fab" id="fab">+</button>
+<div class="toast" id="toast"></div>
+
+<!-- 进货 Modal -->
+<div class="modal-bg" id="modal-si">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增进货</div>
+    <div class="form-group"><label class="form-label">供应商</label><select id="f-sup"></select></div>
+    <div class="form-group"><label class="form-label">产品</label><select id="f-prod"></select></div>
+    <div class="form-group"><label class="form-label">数量 (kg)</label><input type="number" id="f-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <button class="btn-primary" id="btn-si">确认进货</button>
+    <button class="btn-cancel" id="btn-si-cancel">取消</button>
+  </div>
+</div>
+
+<!-- 新增产品 Modal -->
+<div class="modal-bg" id="modal-prod">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增产品</div>
+    <div class="form-group"><label class="form-label">产品名称</label><input type="text" id="np-name" placeholder="输入产品名称"></div>
+    <div class="form-group"><label class="form-label">等级</label><select id="np-grade"><option>A</option><option>B</option><option>C</option></select></div>
+    <div class="form-group"><label class="form-label">单位</label><select id="np-unit"><option>kg</option><option>box</option><option>pcs</option></select></div>
+    <button class="btn-primary" id="btn-prod">添加产品</button>
+    <button class="btn-cancel" id="btn-prod-cancel">取消</button>
+  </div>
+</div>
+
+<!-- 新增客户 Modal -->
+<div class="modal-bg" id="modal-customer">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增客户</div>
+    <div class="form-group"><label class="form-label">客户名称</label><input type="text" id="nc-name" placeholder="输入客户名称"></div>
+    <div class="form-group"><label class="form-label">联系电话（可选）</label><input type="text" id="nc-phone" placeholder="例：012-3456789" inputmode="tel"></div>
+    <div class="form-group"><label class="form-label">备注（可选）</label><input type="text" id="nc-note" placeholder="地址或其他备注"></div>
+    <button class="btn-primary" id="btn-customer">添加客户</button>
+    <button class="btn-cancel" id="btn-customer-cancel">取消</button>
+  </div>
+</div>
+
+<!-- 采购订单 Modal -->
+<div class="modal-bg" id="modal-order">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增采购订单</div>
+    <div class="form-group"><label class="form-label">客户</label><select id="o-cust"></select></div>
+    <div class="form-group"><label class="form-label">产品</label><select id="o-prod"></select></div>
+    <div class="form-group"><label class="form-label">数量 (kg)</label><input type="number" id="o-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <button class="btn-primary" id="btn-order">创建订单</button>
+    <button class="btn-cancel" id="btn-order-cancel">取消</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
