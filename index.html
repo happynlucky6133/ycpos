@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1D9E75">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="YCPos">
+<meta name="description" content="YCPos 库存管理系统">
+<title>YCPos 库存系统</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+:root {
+  --green: #1D9E75; --green-light: #E1F5EE; --green-dark: #085041;
+  --amber: #BA7517; --amber-light: #FAEEDA;
+  --red: #E24B4A; --red-light: #FCEBEB;
+  --blue: #185FA5; --blue-light: #E6F1FB;
+  --bg: #F5F5F5; --surface: #FFFFFF;
+  --text: #1A1A1A; --text2: #666666; --border: #E0E0E0;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111; --surface: #1E1E1E; --text: #F0F0F0; --text2: #999; --border: #333; --green-light: #0a3d2a; --green-dark: #5DCAA5; --amber-light: #3d2a00; --red-light: #3d0a0a; --blue-light: #0a1a3d; }
+}
+html, body { height: 100%; background: var(--bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.app { max-width: 500px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; padding-top: max(12px, env(safe-area-inset-top)); }
+.header-title { font-size: 18px; font-weight: 600; color: var(--text); }
+.header-sub { font-size: 11px; color: var(--text2); margin-top: 1px; }
+.sync-btn { background: var(--green-light); color: var(--green-dark); border: none; border-radius: 99px; font-size: 12px; padding: 5px 12px; cursor: pointer; font-weight: 500; }
+.sync-btn:active { opacity: 0.7; }
+.content { flex: 1; overflow-y: auto; padding: 12px 12px 80px; -webkit-overflow-scrolling: touch; }
+.page { display: none; }
+.page.active { display: block; }
+.nav { background: var(--surface); border-top: 1px solid var(--border); display: flex; padding-bottom: env(safe-area-inset-bottom); position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 500px; z-index: 10; }
+.nav-btn { flex: 1; padding: 10px 4px 10px; border: none; background: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--text2); font-size: 10px; }
+.nav-btn.active { color: var(--green); }
+.nav-icon { font-size: 22px; }
+.section-title { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin: 14px 0 8px; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.stat-card { background: var(--surface); border-radius: 12px; padding: 14px; border: 1px solid var(--border); }
+.stat-label { font-size: 11px; color: var(--text2); margin-bottom: 6px; }
+.stat-value { font-size: 22px; font-weight: 600; color: var(--text); }
+.stat-unit { font-size: 12px; color: var(--text2); font-weight: 400; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; }
+.row-flex { display: flex; justify-content: space-between; align-items: center; }
+.row-title { font-size: 14px; font-weight: 500; color: var(--text); }
+.row-sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+.stock-num { font-size: 18px; font-weight: 600; color: var(--green); }
+.stock-unit { font-size: 11px; color: var(--text2); text-align: right; }
+.badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+.bg { background: var(--green-light); color: var(--green-dark); }
+.ba { background: var(--amber-light); color: var(--amber); }
+.br { background: var(--red-light); color: var(--red); }
+.mono { font-family: 'SF Mono', monospace; font-size: 11px; color: var(--text2); }
+.search-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.search-wrap input { background: none; border: none; font-size: 14px; color: var(--text); flex: 1; outline: none; }
+.empty { text-align: center; padding: 40px; color: var(--text2); font-size: 14px; }
+.loading { text-align: center; padding: 40px; color: var(--text2); font-size: 14px; }
+.toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: #222; color: white; padding: 10px 22px; border-radius: 99px; font-size: 13px; font-weight: 500; z-index: 99; display: none; white-space: nowrap; max-width: 90%; text-align: center; }
+.toast.ok { background: var(--green); }
+.toast.err { background: var(--red); }
+.fab { position: fixed; bottom: 72px; right: 20px; background: var(--green); color: white; width: 54px; height: 54px; border-radius: 50%; border: none; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 9; box-shadow: 0 3px 12px rgba(29,158,117,0.4); }
+.fab:active { transform: scale(0.93); }
+.modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 20; align-items: flex-end; justify-content: center; }
+.modal-bg.open { display: flex; }
+.modal { background: var(--surface); border-radius: 20px 20px 0 0; padding: 16px 16px calc(20px + env(safe-area-inset-bottom)); width: 100%; max-width: 500px; }
+.modal-handle { width: 36px; height: 4px; background: var(--border); border-radius: 99px; margin: 0 auto 16px; }
+.modal-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+.form-group { margin-bottom: 13px; }
+.form-label { font-size: 12px; color: var(--text2); margin-bottom: 5px; display: block; font-weight: 500; }
+select, input[type=number], input[type=text] { width: 100%; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 15px; font-family: inherit; outline: none; }
+select:focus, input:focus { border-color: var(--green); }
+.btn-primary { background: var(--green); color: white; border: none; padding: 13px; border-radius: 12px; font-size: 15px; font-weight: 600; width: 100%; cursor: pointer; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary:active { opacity: 0.85; }
+.btn-cancel { background: none; border: 1px solid var(--border); padding: 11px; border-radius: 12px; font-size: 14px; width: 100%; cursor: pointer; color: var(--text2); margin-top: 8px; }
+.chip { font-size: 11px; padding: 3px 9px; border-radius: 99px; font-weight: 600; }
+.chip-p { background: var(--amber-light); color: var(--amber); }
+.chip-d { background: var(--green-light); color: var(--green-dark); }
+.chip-c { background: var(--red-light); color: var(--red); }
+.order-actions { margin-top: 10px; display: flex; gap: 8px; }
+.order-btn { flex: 1; padding: 7px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; }
+.order-btn-done { border: 1px solid var(--green); color: var(--green); background: none; }
+.order-btn-cancel { border: 1px solid var(--red); color: var(--red); background: none; }
+.order-btn:active { opacity: 0.7; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div>
+      <div class="header-title">YCPos 库存</div>
+      <div class="header-sub" id="sync-time">正在加载...</div>
+    </div>
+    <button class="sync-btn" id="sync-btn" onclick="loadAll()">↻ 刷新</button>
+  </div>
+
+  <div class="content">
+    <!-- 主页 -->
+    <div class="page active" id="page-dashboard">
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-label">产品总类</div><div class="stat-value" id="s-products">-</div></div>
+        <div class="stat-card"><div class="stat-label">总库存</div><div class="stat-value" id="s-stock">- <span class="stat-unit">kg</span></div></div>
+        <div class="stat-card"><div class="stat-label">进货记录</div><div class="stat-value" id="s-stockin">-</div></div>
+        <div class="stat-card"><div class="stat-label">供应商</div><div class="stat-value" id="s-suppliers">-</div></div>
+      </div>
+      <div class="section-title">库存概览</div>
+      <div id="dash-products"><div class="loading">加载中...</div></div>
+      <div class="section-title">最近进货</div>
+      <div id="dash-recent"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 产品 -->
+    <div class="page" id="page-products">
+      <div class="search-wrap">
+        <span style="font-size:16px;color:var(--text2)">🔍</span>
+        <input type="text" placeholder="搜索产品..." id="product-search" oninput="renderProducts()">
+      </div>
+      <div id="product-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 进货 -->
+    <div class="page" id="page-stockin">
+      <div class="section-title">进货记录</div>
+      <div id="stockin-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 订单 -->
+    <div class="page" id="page-orders">
+      <div class="section-title">采购订单</div>
+      <div id="orders-list"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <button class="nav-btn active" onclick="switchPage('dashboard',this)"><span class="nav-icon">🏠</span>主页</button>
+    <button class="nav-btn" onclick="switchPage('products',this)"><span class="nav-icon">📦</span>产品</button>
+    <button class="nav-btn" onclick="switchPage('stockin',this)"><span class="nav-icon">📥</span>进货</button>
+    <button class="nav-btn" onclick="switchPage('orders',this)"><span class="nav-icon">📋</span>订单</button>
+  </div>
+</div>
+
+<button class="fab" id="fab" onclick="openModal()">+</button>
+<div class="toast" id="toast"></div>
+
+<!-- 进货 Modal -->
+<div class="modal-bg" id="modal-si">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增进货</div>
+    <div class="form-group"><label class="form-label">供应商</label><select id="f-sup"></select></div>
+    <div class="form-group"><label class="form-label">产品</label><select id="f-prod"></select></div>
+    <div class="form-group"><label class="form-label">数量 (kg)</label><input type="number" id="f-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <button class="btn-primary" id="btn-si" onclick="submitStockIn()">确认进货</button>
+    <button class="btn-cancel" onclick="closeModal()">取消</button>
+  </div>
+</div>
+
+<!-- 新增产品 Modal -->
+<div class="modal-bg" id="modal-prod">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增产品</div>
+    <div class="form-group"><label class="form-label">产品名称</label><input type="text" id="np-name" placeholder="输入产品名称"></div>
+    <div class="form-group"><label class="form-label">等级</label><select id="np-grade"><option>A</option><option>B</option><option>C</option></select></div>
+    <div class="form-group"><label class="form-label">单位</label><select id="np-unit"><option>kg</option><option>box</option><option>pcs</option></select></div>
+    <button class="btn-primary" id="btn-prod" onclick="submitProduct()">添加产品</button>
+    <button class="btn-cancel" onclick="closeModal()">取消</button>
+  </div>
+</div>
+
+<!-- 采购订单 Modal -->
+<div class="modal-bg" id="modal-order">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增采购订单</div>
+    <div class="form-group"><label class="form-label">客户</label><select id="o-cust"></select></div>
+    <div class="form-group"><label class="form-label">产品</label><select id="o-prod"></select></div>
+    <div class="form-group"><label class="form-label">数量 (kg)</label><input type="number" id="o-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <button class="btn-primary" id="btn-order" onclick="submitOrder()">创建订单</button>
+    <button class="btn-cancel" onclick="closeModal()">取消</button>
+  </div>
+</div>
+
+<script>
+const API = 'https://script.google.com/macros/s/AKfycbxWSPIE4veSauMMFKCje7NS3ms-moX3eMcdCv0mJHIEHLZEXkjWhGFbw-pqmhainy2kIQ/exec';
+let db = { products:[], suppliers:[], customers:[], stockIns:[], stockInDetails:[], orders:[], orderDetails:[] };
+let currentPage = 'dashboard', currentModal = null;
+
+async function api(params) {
+  const url = API + '?' + new URLSearchParams(params).toString();
+  const res = await fetch(url);
+  return res.json();
+}
+
+async function loadAll() {
+  const btn = document.getElementById('sync-btn');
+  btn.disabled = true; btn.textContent = '加载中...';
+  try {
+    const data = await api({ action: 'getAll' });
+    if (data.error) throw new Error(data.error);
+    db.products = data.products || [];
+    db.suppliers = data.suppliers || [];
+    db.customers = data.customers || [];
+    db.stockIns = data.stockIns || [];
+    db.stockInDetails = data.stockInDetails || [];
+    db.orders = data.orders || [];
+    db.orderDetails = data.orderDetails || [];
+    populateSelects();
+    renderPage(currentPage);
+    const t = new Date();
+    document.getElementById('sync-time').textContent = '已同步 ' + t.toTimeString().slice(0,5);
+  } catch(e) {
+    showToast('加载失败: ' + e.message, 'err');
+    document.getElementById('sync-time').textContent = '加载失败，请刷新';
+  }
+  btn.disabled = false; btn.textContent = '↻ 刷新';
+}
+
+function populateSelects() {
+  document.getElementById('f-sup').innerHTML = db.suppliers.map(s => `<option value="${s.SupplierID}">${s.SupplierName}</option>`).join('');
+  ['f-prod','o-prod'].forEach(id => {
+    document.getElementById(id).innerHTML = db.products.map(p => `<option value="${p.ProductID}">${p.ProductName} (${p.Grade})</option>`).join('');
+  });
+  document.getElementById('o-cust').innerHTML = db.customers.map(c => `<option value="${c.CustomerID}">${c.CustomerName}</option>`).join('');
+}
+
+function getProd(id) { const p = db.products.find(x => x.ProductID===id); return p ? p.ProductName : id; }
+function getSup(id)  { const s = db.suppliers.find(x => x.SupplierID===id); return s ? s.SupplierName : id; }
+function getCust(id) { const c = db.customers.find(x => x.CustomerID===id); return c ? c.CustomerName : id; }
+function stockBadge(n) {
+  n = Number(n);
+  if (n > 200) return '<span class="badge bg">充足</span>';
+  if (n > 50)  return '<span class="badge ba">偏低</span>';
+  return '<span class="badge br">告急</span>';
+}
+
+function renderDashboard() {
+  const total = db.products.reduce((a,p) => a + Number(p.StockBalance||0), 0);
+  document.getElementById('s-products').textContent = db.products.length;
+  document.getElementById('s-stock').innerHTML = total + ' <span class="stat-unit">kg</span>';
+  document.getElementById('s-stockin').textContent = db.stockIns.length;
+  document.getElementById('s-suppliers').textContent = db.suppliers.length;
+
+  document.getElementById('dash-products').innerHTML = db.products.length
+    ? db.products.map(p => `<div class="card row-flex">
+        <div><div class="row-title">${p.ProductName}</div><div class="row-sub">等级 ${p.Grade} · ${stockBadge(p.StockBalance)}</div></div>
+        <div><div class="stock-num">${Number(p.StockBalance||0)}</div><div class="stock-unit">${p.Unit}</div></div>
+      </div>`).join('')
+    : '<div class="empty">暂无产品</div>';
+
+  const recent = [...db.stockIns].reverse().slice(0,3);
+  document.getElementById('dash-recent').innerHTML = recent.length
+    ? recent.map(s => {
+        const d = db.stockInDetails.find(x => x.StockInID===s.StockInID);
+        return `<div class="card">
+          <div class="row-flex" style="margin-bottom:5px">
+            <span class="mono">${s.StockInID}</span>
+            <span style="font-size:11px;color:var(--text2)">${String(s.Date).slice(0,10)}</span>
+          </div>
+          <div style="font-size:13px;color:var(--text)">${d?getProd(d.ProductID):'-'} · <strong>${d?d.Qty:'-'} kg</strong></div>
+          <div class="row-sub">${getSup(s.SupplierID)}</div>
+        </div>`;
+      }).join('')
+    : '<div class="empty">暂无进货记录</div>';
+}
+
+function renderProducts() {
+  const q = (document.getElementById('product-search').value||'').toLowerCase();
+  const list = db.products.filter(p => p.ProductName.toLowerCase().includes(q));
+  document.getElementById('product-list').innerHTML = list.length
+    ? list.map(p => `<div class="card row-flex">
+        <div><div class="row-title">${p.ProductName}</div><div class="row-sub">${p.ProductID} · 等级 ${p.Grade} · ${stockBadge(p.StockBalance)}</div></div>
+        <div><div class="stock-num">${Number(p.StockBalance||0)}</div><div class="stock-unit">${p.Unit}</div></div>
+      </div>`).join('')
+    : '<div class="empty">没有找到产品</div>';
+}
+
+function renderStockIn() {
+  document.getElementById('stockin-list').innerHTML = db.stockIns.length
+    ? [...db.stockIns].reverse().map(s => {
+        const d = db.stockInDetails.find(x => x.StockInID===s.StockInID);
+        return `<div class="card">
+          <div class="row-flex" style="margin-bottom:5px">
+            <span class="mono">${s.StockInID}</span>
+            <span style="font-size:11px;color:var(--text2)">${String(s.Date).slice(0,10)}</span>
+          </div>
+          <div style="font-size:13px">${d?getProd(d.ProductID):'-'} · <strong>${d?d.Qty:'-'} kg</strong></div>
+          <div class="row-sub">${getSup(s.SupplierID)}</div>
+        </div>`;
+      }).join('')
+    : '<div class="empty">暂无进货记录</div>';
+}
+
+function renderOrders() {
+  const sl = {pending:'待处理', done:'完成', cancelled:'取消'};
+  const sc = {pending:'chip-p', done:'chip-d', cancelled:'chip-c'};
+  document.getElementById('orders-list').innerHTML = db.orders.length
+    ? [...db.orders].reverse().map(o => {
+        const d = db.orderDetails.find(x => x.POID===o.POID);
+        const st = o.Status||'pending';
+        return `<div class="card">
+          <div class="row-flex" style="margin-bottom:5px">
+            <span class="mono">${o.POID}</span>
+            <span class="chip ${sc[st]||'chip-p'}">${sl[st]||st}</span>
+          </div>
+          <div style="font-size:13px">${d?getProd(d.ProductID):'-'} · <strong>${d?d.QTY:'-'} kg</strong></div>
+          <div class="row-sub">${getCust(o.CustomerID)} · ${String(o.Date).slice(0,10)}</div>
+          ${st==='pending'?`<div class="order-actions">
+            <button class="order-btn order-btn-done" onclick="changeStatus('${o.POID}','done','${d?d.ProductID:''}','${d?d.QTY:0}')">✓ 完成</button>
+            <button class="order-btn order-btn-cancel" onclick="changeStatus('${o.POID}','cancelled','','')">✗ 取消</button>
+          </div>`:''}
+        </div>`;
+      }).join('')
+    : '<div class="empty">暂无采购订单</div>';
+}
+
+async function changeStatus(poID, status, productID, qty) {
+  try {
+    await api({ action:'updateOrder', poID, status, productID, qty });
+    showToast(status==='done'?'订单已完成 ✓':'订单已取消', status==='done'?'ok':'err');
+    await loadAll();
+  } catch(e) { showToast('操作失败', 'err'); }
+}
+
+function renderPage(p) {
+  if (p==='dashboard') renderDashboard();
+  else if (p==='products') renderProducts();
+  else if (p==='stockin') renderStockIn();
+  else if (p==='orders') renderOrders();
+}
+
+function switchPage(page, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  btn.classList.add('active');
+  currentPage = page;
+  renderPage(page);
+}
+
+function openModal() {
+  if (currentPage==='dashboard'||currentPage==='stockin') currentModal='modal-si';
+  else if (currentPage==='products') currentModal='modal-prod';
+  else if (currentPage==='orders') currentModal='modal-order';
+  if (currentModal) document.getElementById(currentModal).classList.add('open');
+}
+function closeModal() {
+  if (currentModal) document.getElementById(currentModal).classList.remove('open');
+  currentModal = null;
+}
+
+async function submitStockIn() {
+  const qty = parseInt(document.getElementById('f-qty').value);
+  if (!qty||qty<1) { showToast('请输入正确数量','err'); return; }
+  const btn = document.getElementById('btn-si');
+  btn.disabled=true; btn.textContent='提交中...';
+  try {
+    const res = await api({ action:'addStockIn', supplierID:document.getElementById('f-sup').value, productID:document.getElementById('f-prod').value, qty, createdBy:'duzenfruit@gmail.com' });
+    if (res.error) throw new Error(res.error);
+    showToast('进货成功！','ok');
+    document.getElementById('f-qty').value='';
+    closeModal(); await loadAll();
+  } catch(e) { showToast('提交失败: '+e.message,'err'); }
+  btn.disabled=false; btn.textContent='确认进货';
+}
+
+async function submitProduct() {
+  const name = document.getElementById('np-name').value.trim();
+  if (!name) { showToast('请输入产品名称','err'); return; }
+  const btn = document.getElementById('btn-prod');
+  btn.disabled=true; btn.textContent='添加中...';
+  try {
+    const res = await api({ action:'addProduct', name, grade:document.getElementById('np-grade').value, unit:document.getElementById('np-unit').value });
+    if (res.error) throw new Error(res.error);
+    showToast('产品已添加！','ok');
+    document.getElementById('np-name').value='';
+    closeModal(); await loadAll();
+  } catch(e) { showToast('提交失败: '+e.message,'err'); }
+  btn.disabled=false; btn.textContent='添加产品';
+}
+
+async function submitOrder() {
+  const qty = parseInt(document.getElementById('o-qty').value);
+  if (!qty||qty<1) { showToast('请输入正确数量','err'); return; }
+  const btn = document.getElementById('btn-order');
+  btn.disabled=true; btn.textContent='创建中...';
+  try {
+    const res = await api({ action:'addOrder', customerID:document.getElementById('o-cust').value, productID:document.getElementById('o-prod').value, qty });
+    if (res.error) throw new Error(res.error);
+    showToast('订单已创建！','ok');
+    document.getElementById('o-qty').value='';
+    closeModal(); await loadAll();
+  } catch(e) { showToast('提交失败: '+e.message,'err'); }
+  btn.disabled=false; btn.textContent='创建订单';
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type||'ok');
+  t.style.display = 'block';
+  setTimeout(() => t.style.display='none', 3000);
+}
+
+document.querySelectorAll('.modal-bg').forEach(m => {
+  m.addEventListener('click', e => { if (e.target===m) closeModal(); });
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+
+loadAll();
+</script>
+</body>
+</html>
