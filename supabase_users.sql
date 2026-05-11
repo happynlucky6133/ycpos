@@ -10,7 +10,7 @@ CREATE TABLE users (
   "Password" TEXT NOT NULL,
   "Role" TEXT NOT NULL,
   "DisplayName" TEXT NOT NULL,
-  CONSTRAINT valid_role CHECK ("Role" IN ('admin', 'sales', 'purchase'))
+  CONSTRAINT valid_role CHECK ("Role" IN ('admin', 'sales', 'purchase', 'warehouse'))
 );
 
 -- 插入预设账户（请尽快修改密码！）

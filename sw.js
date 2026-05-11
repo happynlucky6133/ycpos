@@ -1,5 +1,5 @@
 /* ===== YCPos Service Worker v4 - 子路径兼容版 ===== */
-const CACHE = 'ycpos-v11';
+const CACHE = 'ycpos-v13';
 const STATIC_ASSETS = [
   '.',
   './index.html',
@@ -47,9 +47,9 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = e.request.url;
 
-  // API 请求：GET 才缓存；POST/RPC 不能缓存，否则写入成功也可能被前端当成失败。
+  // API 请求永远走网络，不缓存业务数据，避免换账号或离线时看到旧资料。
   if (url.includes('supabase.co')) {
-    e.respondWith(networkFirstWithCacheFallback(e.request));
+    e.respondWith(fetch(e.request));
     return;
   }
 
@@ -60,25 +60,6 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match(e.request))
   );
 });
-
-// ============================================================
-// 网络优先策略（适用于 API）
-// ============================================================
-async function networkFirstWithCacheFallback(request) {
-  try {
-    const response = await fetch(request);
-    // 只缓存成功的 GET 响应
-    if (response.ok && request.method === 'GET') {
-      const cache = await caches.open(CACHE);
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch (err) {
-    const cached = await caches.match(request);
-    if (cached) return cached;
-    throw err;
-  }
-}
 
 // ============================================================
 // 请求并缓存（适用于静态资源）

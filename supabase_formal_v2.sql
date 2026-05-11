@@ -8,7 +8,7 @@
 CREATE TABLE IF NOT EXISTS staff_profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   "DisplayName" TEXT NOT NULL DEFAULT '',
-  "Role" TEXT NOT NULL CHECK ("Role" IN ('admin', 'sales', 'purchase')),
+  "Role" TEXT NOT NULL CHECK ("Role" IN ('admin', 'sales', 'purchase', 'warehouse')),
   "Active" BOOLEAN NOT NULL DEFAULT true,
   "CreatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -218,9 +218,12 @@ AS $$
 DECLARE
   v_stock_in_id TEXT;
   v_detail_id TEXT;
+  v_rows INTEGER;
 BEGIN
   PERFORM require_role(ARRAY['admin', 'purchase']);
   IF p_qty <= 0 THEN RAISE EXCEPTION 'Invalid quantity'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM suppliers WHERE "SupplierID" = p_supplier_id) THEN RAISE EXCEPTION 'Supplier not found'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM products WHERE "ProductID" = p_product_id) THEN RAISE EXCEPTION 'Product not found'; END IF;
 
   v_stock_in_id := 'S01-' || to_char(now(), 'YYMMDD') || '-' || substr(md5(random()::text), 1, 4);
   v_detail_id := substr(md5(random()::text), 1, 10);
@@ -234,6 +237,8 @@ BEGIN
   UPDATE products
   SET "StockBalance" = COALESCE("StockBalance", 0) + p_qty
   WHERE "ProductID" = p_product_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 1 THEN RAISE EXCEPTION 'Product stock update failed'; END IF;
 
   INSERT INTO autocount_sync_queue ("EntityType", "EntityID", "Action", "Payload")
   VALUES ('stock_in', v_stock_in_id, 'upsert', jsonb_build_object('supplier_id', p_supplier_id, 'product_id', p_product_id, 'qty', p_qty));
@@ -413,6 +418,7 @@ BEGIN
   IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'Order requires at least one item';
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM customers WHERE "CustomerID" = p_customer_id) THEN RAISE EXCEPTION 'Customer not found'; END IF;
 
   v_po_id := 'PO-' || to_char(now(), 'YYMMDD') || '-' || substr(md5(random()::text), 1, 4);
 
@@ -429,6 +435,7 @@ BEGIN
     IF v_product_id IS NULL OR v_product_id = '' THEN RAISE EXCEPTION 'Product is required'; END IF;
     IF v_qty <= 0 THEN RAISE EXCEPTION 'Invalid quantity'; END IF;
     IF v_unit_price < 0 THEN RAISE EXCEPTION 'Invalid unit price'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM products WHERE "ProductID" = v_product_id) THEN RAISE EXCEPTION 'Product not found'; END IF;
 
     v_detail_id := substr(md5(random()::text || clock_timestamp()::text), 1, 10);
     INSERT INTO po_details ("DetailID", "POID", "ProductID", "QTY", "UnitPrice", "LineTotal")
@@ -509,11 +516,57 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION get_orders_app()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_role TEXT;
+  v_can_see_price BOOLEAN;
+  v_orders JSONB;
+  v_details JSONB;
+BEGIN
+  v_role := app_role();
+  IF auth.uid() IS NULL OR v_role <> ALL(ARRAY['admin', 'sales', 'purchase', 'warehouse']) THEN
+    RAISE EXCEPTION 'Permission denied';
+  END IF;
+  v_can_see_price := v_role IN ('admin', 'sales');
+
+  SELECT COALESCE(jsonb_agg(
+    CASE WHEN v_can_see_price THEN to_jsonb(o) || jsonb_build_object('CustomerName', COALESCE(c."CustomerName", o."CustomerID"))
+    ELSE (to_jsonb(o) || jsonb_build_object('CustomerName', COALESCE(c."CustomerName", o."CustomerID"))) - 'TotalAmount' END
+    ORDER BY o.id
+  ), '[]'::jsonb)
+  INTO v_orders
+  FROM purchase_orders o
+  LEFT JOIN customers c ON c."CustomerID" = o."CustomerID";
+
+  SELECT COALESCE(jsonb_agg(
+    CASE WHEN v_can_see_price THEN to_jsonb(d)
+    ELSE jsonb_build_object(
+      'id', d.id,
+      'DetailID', d."DetailID",
+      'POID', d."POID",
+      'ProductID', d."ProductID",
+      'QTY', d."QTY"
+    ) END
+    ORDER BY d.id
+  ), '[]'::jsonb)
+  INTO v_details
+  FROM po_details d;
+
+  RETURN jsonb_build_object('orders', v_orders, 'details', v_details);
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION create_stock_in(TEXT, TEXT, NUMERIC, TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION write_audit(TEXT, TEXT, TEXT) TO authenticated;
+REVOKE EXECUTE ON FUNCTION write_audit(TEXT, TEXT, TEXT) FROM authenticated;
 GRANT EXECUTE ON FUNCTION create_product(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION create_supplier(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION create_customer(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION process_fruit_loss(TEXT, TEXT, NUMERIC, NUMERIC, NUMERIC) TO authenticated;
 GRANT EXECUTE ON FUNCTION create_sales_order(TEXT, JSONB, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION change_sales_order_status(TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_orders_app() TO authenticated;

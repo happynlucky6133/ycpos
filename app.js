@@ -251,6 +251,22 @@ function applyPermissions() {
     try { return JSON.parse(text); } catch { return text; }
   }
 
+  async function loadOrdersForCurrentRole() {
+    try {
+      const bundle = await sbRpc('get_orders_app', {});
+      if (bundle && Array.isArray(bundle.orders) && Array.isArray(bundle.details)) {
+        return { orders: bundle.orders, orderDetails: bundle.details };
+      }
+    } catch (e) {
+      console.warn('Order RPC unavailable, falling back to direct tables:', e.message);
+    }
+    const [orders, orderDetails] = await Promise.all([
+      sbGetOptional('purchase_orders', { order: 'id' }),
+      sbGetOptional('po_details', { order: 'id' })
+    ]);
+    return { orders, orderDetails };
+  }
+
   // ============================================================
   // 登录 / 登出
   // ============================================================
@@ -337,17 +353,18 @@ function applyPermissions() {
     btn.textContent = '加载中...';
 
     try {
-      const [products, suppliers, customers, stockIns, stockInDetails, processingLogs, orders, orderDetails] = await Promise.all([
+      const [products, suppliers, customers, stockIns, stockInDetails, processingLogs, orderBundle] = await Promise.all([
         sbGet('products', { order: 'id' }),
         sbGetOptional('suppliers', { order: 'id' }),
         sbGetOptional('customers', { order: 'id' }),
         sbGetOptional('stock_ins', { order: 'id' }),
         sbGetOptional('stock_in_details', { order: 'id' }),
         sbGetOptional('processing_logs', { order: 'id' }),
-        sbGetOptional('purchase_orders', { order: 'id' }),
-        sbGetOptional('po_details', { order: 'id' })
+        loadOrdersForCurrentRole()
       ]);
 
+      const orders = orderBundle.orders || [];
+      const orderDetails = orderBundle.orderDetails || [];
       buildIndexes({ products, suppliers, customers, stockIns, stockInDetails, processingLogs, orders, orderDetails });
       populateSelects();
       renderCurrentPage();
@@ -395,23 +412,23 @@ function applyPermissions() {
   function populateSelects() {
     const sup = document.getElementById('f-sup');
     if (sup) sup.innerHTML = Array.from(state.suppliers.values())
-      .map(s => `<option value="${s.SupplierID}">${escapeHTML(s.SupplierName)}</option>`).join('');
+      .map(s => `<option value="${escapeHTML(s.SupplierID)}">${escapeHTML(s.SupplierName)}</option>`).join('');
 
     ['f-prod', 'o-prod'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = Array.from(state.products.values())
-        .map(p => `<option value="${p.ProductID}">${escapeHTML(p.ProductName)} (${p.Grade || ''})</option>`).join('');
+        .map(p => `<option value="${escapeHTML(p.ProductID)}">${escapeHTML(p.ProductName)} (${escapeHTML(p.Grade || '')})</option>`).join('');
     });
 
     ['pr-source', 'pr-target'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = Array.from(state.products.values())
-        .map(p => `<option value="${p.ProductID}">${escapeHTML(formatProductLabel(p))}</option>`).join('');
+        .map(p => `<option value="${escapeHTML(p.ProductID)}">${escapeHTML(formatProductLabel(p))}</option>`).join('');
     });
 
     const cust = document.getElementById('o-cust');
     if (cust) cust.innerHTML = Array.from(state.customers.values())
-      .map(c => `<option value="${c.CustomerID}">${escapeHTML(c.CustomerName)}</option>`).join('');
+      .map(c => `<option value="${escapeHTML(c.CustomerID)}">${escapeHTML(c.CustomerName)}</option>`).join('');
 
     // 初始化数量单位标签
     updateQtyLabels();
@@ -484,6 +501,10 @@ function applyPermissions() {
       const price = Number(d.UnitPrice || 0);
       return sum + qty * price;
     }, 0));
+  }
+
+  function getOrderCustomerName(order) {
+    return order.CustomerName || getCustName(order.CustomerID);
   }
 
   function stockBadge(n) {
@@ -621,7 +642,7 @@ function applyPermissions() {
         `<div class="card row-flex">
           <div>
             <div class="row-title">${escapeHTML(p.ProductName)}</div>
-            <div class="row-sub">等级 ${p.Grade || '-'} · ${stockBadge(p.StockBalance)}${p.Note ? ' · ' + escapeHTML(p.Note) : ''}</div>
+            <div class="row-sub">等级 ${escapeHTML(p.Grade || '-')} · ${stockBadge(p.StockBalance)}${p.Note ? ' · ' + escapeHTML(p.Note) : ''}</div>
           </div>
           <div>
             <div class="stock-num">${Number(p.StockBalance || 0)}</div>
@@ -667,7 +688,7 @@ function applyPermissions() {
       `<div class="card row-flex">
         <div>
           <div class="row-title">${escapeHTML(p.ProductName)}</div>
-          <div class="row-sub">${p.ProductID} · 等级 ${p.Grade || '-'} · ${stockBadge(p.StockBalance)}${p.Note ? ' · ' + escapeHTML(p.Note) : ''}</div>
+          <div class="row-sub">${escapeHTML(p.ProductID)} · 等级 ${escapeHTML(p.Grade || '-')} · ${stockBadge(p.StockBalance)}${p.Note ? ' · ' + escapeHTML(p.Note) : ''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <div style="text-align:right">
@@ -834,7 +855,7 @@ function applyPermissions() {
       const st = o.Status || 'pending';
       const label = STATUS_LABELS[st] || st;
       const chipClass = STATUS_CHIPS[st] || 'chip-p';
-      const custName = escapeHTML(getCustName(o.CustomerID));
+      const custName = escapeHTML(getOrderCustomerName(o));
       const date = String(o.Date).slice(0,10);
       const total = sumOrderTotal(o, lines);
       const lineHtml = lines.length ? lines.map(d => {
@@ -918,7 +939,7 @@ function applyPermissions() {
       `<div class="summary-row"><span>${escapeHTML(getProdName(id))}</span><strong>${fmtNum(item.qty)} ${escapeHTML(item.unit)}${canSeePrices() ? ' · ' + fmtMoney(item.amount) : ''}</strong></div>`
     ).join('');
     const customerRows = canSeePrices() ? Object.entries(stats.customers).map(([id, amount]) =>
-      `<div class="summary-row"><span>${escapeHTML(getCustName(id))}</span><strong>${fmtMoney(amount)}</strong></div>`
+      `<div class="summary-row"><span>${escapeHTML(getOrderCustomerName(orders.find(o => o.CustomerID === id) || { CustomerID: id }))}</span><strong>${fmtMoney(amount)}</strong></div>`
     ).join('') : '';
 
     container.innerHTML = `<div class="summary-block">
@@ -1008,7 +1029,7 @@ function applyPermissions() {
       <div class="meta">
         <strong>订单号</strong><span>${escapeHTML(poID)}</span>
         <strong>日期</strong><span>${escapeHTML(getDateText(o.Date))}</span>
-        <strong>客户</strong><span>${escapeHTML(getCustName(o.CustomerID))}</span>
+        <strong>客户</strong><span>${escapeHTML(getOrderCustomerName(o))}</span>
         <strong>状态</strong><span>${escapeHTML(STATUS_LABELS[o.Status || 'pending'] || o.Status || '')}</span>
         <strong>备注</strong><span>${escapeHTML(o.Note || '')}</span>
       </div>
@@ -1115,7 +1136,7 @@ function applyPermissions() {
   // ============================================================
   async function submitStockIn() {
     if (!canUseModal('modal-si')) { showToast('无权操作', 'err'); return; }
-    const qty = parseInt(document.getElementById('f-qty').value);
+    const qty = Number(document.getElementById('f-qty').value);
     if (!qty || qty < 1) { showToast('请输入正确数量', 'err'); return; }
     const btn = document.getElementById('btn-si');
     btn.disabled = true;
