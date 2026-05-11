@@ -1,13 +1,13 @@
-/* ===== YCPos Service Worker v2 - 优化版 ===== */
-const CACHE = 'ycpos-v2';
+/* ===== YCPos Service Worker v4 - 子路径兼容版 ===== */
+const CACHE = 'ycpos-v10';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/style.css',
-  '/app.js',
-  '/icon-192.png',
-  '/icon-512.png'
+  '.',
+  './index.html',
+  './manifest.json',
+  './style.css',
+  './app.js',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 // ============================================================
@@ -47,8 +47,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = e.request.url;
 
-  // API 请求：网络优先，失败时尝试缓存
-  if (url.includes('script.google.com')) {
+  // API 请求：GET 才缓存；POST/RPC 不能缓存，否则写入成功也可能被前端当成失败。
+  if (url.includes('supabase.co')) {
     e.respondWith(networkFirstWithCacheFallback(e.request));
     return;
   }
@@ -67,8 +67,8 @@ self.addEventListener('fetch', e => {
 async function networkFirstWithCacheFallback(request) {
   try {
     const response = await fetch(request);
-    // 只缓存成功的响应
-    if (response.ok) {
+    // 只缓存成功的 GET 响应
+    if (response.ok && request.method === 'GET') {
       const cache = await caches.open(CACHE);
       cache.put(request, response.clone());
     }

@@ -14,13 +14,43 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="app">
+
+<!-- ===== 登录页面 ===== -->
+<div class="page" id="page-login">
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="login-logo">📦</div>
+      <div class="login-title">YCPos 库存系统</div>
+      <div class="login-sub">请登录以继续</div>
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input type="text" id="login-user" placeholder="输入员工 Email" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label class="form-label">密码</label>
+        <input type="password" id="login-pass" placeholder="输入密码" autocomplete="current-password">
+      </div>
+      <button class="btn-primary" id="login-btn" style="margin-top:8px">登录</button>
+      <div id="login-error" style="color:var(--danger);font-size:13px;text-align:center;margin-top:8px;display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 主应用 ===== -->
+<div class="app" id="app-main">
   <div class="header">
     <div>
       <div class="header-title">YCPos 库存</div>
       <div class="header-sub" id="sync-time">正在加载...</div>
     </div>
-    <button class="sync-btn" id="sync-btn">↻ 刷新</button>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span id="user-display" style="font-size:12px;color:var(--text2);cursor:pointer"></span>
+      <span id="admin-actions" style="display:none">
+        <button class="link-btn" id="btn-add-user">👤+</button>
+        <button class="link-btn" id="btn-change-pw">🔑</button>
+      </span>
+      <button class="sync-btn" id="sync-btn">↻ 刷新</button>
+    </div>
   </div>
 
   <div class="content">
@@ -28,7 +58,7 @@
     <div class="page active" id="page-dashboard">
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">产品总类</div><div class="stat-value" id="s-products">-</div></div>
-        <div class="stat-card"><div class="stat-label">总库存</div><div class="stat-value" id="s-stock">- <span class="stat-unit">kg</span></div></div>
+        <div class="stat-card"><div class="stat-label">总库存</div><div class="stat-value" id="s-stock"><span id="s-stock-num">-</span></div></div>
         <div class="stat-card"><div class="stat-label">进货记录</div><div class="stat-value" id="s-stockin">-</div></div>
         <div class="stat-card"><div class="stat-label">供应商</div><div class="stat-value" id="s-suppliers">-</div></div>
       </div>
@@ -50,13 +80,44 @@
     <!-- 进货 -->
     <div class="page" id="page-stockin">
       <div class="section-title">进货记录</div>
+      <div class="filter-row">
+        <input type="date" id="stockin-date-from">
+        <input type="date" id="stockin-date-to">
+        <button class="btn-secondary inline" id="btn-stockin-clear" type="button">清除</button>
+      </div>
       <div id="stockin-list"><div class="loading">加载中...</div></div>
     </div>
 
     <!-- 订单 -->
     <div class="page" id="page-orders">
-      <div class="section-title">采购订单</div>
+      <div class="section-title">客户订单 / 出货</div>
+      <div class="filter-row">
+        <input type="date" id="order-date-from">
+        <input type="date" id="order-date-to">
+        <button class="btn-secondary inline" id="btn-order-clear" type="button">清除</button>
+      </div>
+      <div id="order-summary"><div class="loading">加载中...</div></div>
+      <div class="section-title">订单列表</div>
       <div id="orders-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 加工 / 损耗 -->
+    <div class="page" id="page-processing">
+      <div class="section-title">等级转换规则</div>
+      <div id="grade-rule-list"></div>
+      <div class="section-title">损耗概览</div>
+      <div id="loss-summary"><div class="loading">加载中...</div></div>
+      <div class="section-title">加工记录</div>
+      <div id="processing-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 供应商 -->
+    <div class="page" id="page-suppliers">
+      <div class="search-wrap">
+        <span style="font-size:16px;color:var(--text2)">🔍</span>
+        <input type="text" placeholder="搜索供应商..." id="supplier-search">
+      </div>
+      <div id="supplier-list"><div class="loading">加载中...</div></div>
     </div>
 
     <!-- 客户 -->
@@ -67,14 +128,23 @@
       </div>
       <div id="customer-list"><div class="loading">加载中...</div></div>
     </div>
+
+    <!-- 审计日志 -->
+    <div class="page" id="page-audit">
+      <div class="section-title">操作审计日志</div>
+      <div id="audit-list"><div class="loading">加载中...</div></div>
+    </div>
   </div>
 
-  <div class="nav">
+  <div class="nav" id="nav-bar">
     <button class="nav-btn active" data-page="dashboard"><span class="nav-icon">🏠</span>主页</button>
     <button class="nav-btn" data-page="products"><span class="nav-icon">📦</span>产品</button>
     <button class="nav-btn" data-page="stockin"><span class="nav-icon">📥</span>进货</button>
     <button class="nav-btn" data-page="orders"><span class="nav-icon">📋</span>订单</button>
+    <button class="nav-btn" data-page="processing"><span class="nav-icon">⚖️</span>加工</button>
+    <button class="nav-btn" data-page="suppliers"><span class="nav-icon">🏭</span>供应商</button>
     <button class="nav-btn" data-page="customers"><span class="nav-icon">👥</span>客户</button>
+    <button class="nav-btn" data-page="audit" id="nav-audit" style="display:none"><span class="nav-icon">📜</span>审计</button>
   </div>
 </div>
 
@@ -88,7 +158,8 @@
     <div class="modal-title">新增进货</div>
     <div class="form-group"><label class="form-label">供应商</label><select id="f-sup"></select></div>
     <div class="form-group"><label class="form-label">产品</label><select id="f-prod"></select></div>
-    <div class="form-group"><label class="form-label">数量 (kg)</label><input type="number" id="f-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <div class="form-group"><label class="form-label" id="f-qty-label">数量</label><input type="number" id="f-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <div class="form-group"><label class="form-label">备注（可选）</label><input type="text" id="f-note" placeholder="车牌、批次、付款备注等"></div>
     <button class="btn-primary" id="btn-si">确认进货</button>
     <button class="btn-cancel" id="btn-si-cancel">取消</button>
   </div>
@@ -100,8 +171,9 @@
     <div class="modal-handle"></div>
     <div class="modal-title">新增产品</div>
     <div class="form-group"><label class="form-label">产品名称</label><input type="text" id="np-name" placeholder="输入产品名称"></div>
-    <div class="form-group"><label class="form-label">等级</label><select id="np-grade"><option>A</option><option>B</option><option>C</option></select></div>
+    <div class="form-group"><label class="form-label">等级</label><input type="text" id="np-grade" placeholder="输入等级（如 A、B、C 或自定义）"></div>
     <div class="form-group"><label class="form-label">单位</label><select id="np-unit"><option>kg</option><option>box</option><option>pcs</option></select></div>
+    <div class="form-group"><label class="form-label">备注（可选）</label><input type="text" id="np-note" placeholder="别名、包装说明等"></div>
     <button class="btn-primary" id="btn-prod">添加产品</button>
     <button class="btn-cancel" id="btn-prod-cancel">取消</button>
   </div>
@@ -120,16 +192,84 @@
   </div>
 </div>
 
+<!-- 新增供应商 Modal -->
+<div class="modal-bg" id="modal-supplier">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增供应商</div>
+    <div class="form-group"><label class="form-label">供应商名称</label><input type="text" id="ns-name" placeholder="输入供应商名称"></div>
+    <div class="form-group"><label class="form-label">联系电话（可选）</label><input type="text" id="ns-phone" placeholder="例：012-3456789" inputmode="tel"></div>
+    <div class="form-group"><label class="form-label">备注（可选）</label><input type="text" id="ns-note" placeholder="地址或其他备注"></div>
+    <button class="btn-primary" id="btn-supplier">添加供应商</button>
+    <button class="btn-cancel" id="btn-supplier-cancel">取消</button>
+  </div>
+</div>
+
 <!-- 采购订单 Modal -->
 <div class="modal-bg" id="modal-order">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div class="modal-title">新增采购订单</div>
+    <div class="modal-title">新增客户订单</div>
     <div class="form-group"><label class="form-label">客户</label><select id="o-cust"></select></div>
     <div class="form-group"><label class="form-label">产品</label><select id="o-prod"></select></div>
-    <div class="form-group"><label class="form-label">数量 (kg)</label><input type="number" id="o-qty" placeholder="0" min="1" inputmode="numeric"></div>
+    <div class="order-line-inputs">
+      <div class="form-group"><label class="form-label" id="o-qty-label">数量</label><input type="number" id="o-qty" placeholder="0" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="form-group"><label class="form-label">单价</label><input type="number" id="o-price" placeholder="0.00" min="0" step="0.01" inputmode="decimal"></div>
+    </div>
+    <button class="btn-secondary" id="btn-order-add-line" type="button">加入产品</button>
+    <div class="order-draft-list" id="order-draft-list"><div class="empty small">还没有产品</div></div>
+    <div class="calc-box" id="order-total">总额 RM 0.00</div>
+    <div class="form-group"><label class="form-label">备注（可选）</label><input type="text" id="o-note" placeholder="送货、仓库、客户要求等"></div>
     <button class="btn-primary" id="btn-order">创建订单</button>
     <button class="btn-cancel" id="btn-order-cancel">取消</button>
+  </div>
+</div>
+
+<!-- 加工 / 损耗 Modal -->
+<div class="modal-bg" id="modal-processing">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增加工 / 损耗</div>
+    <div class="form-group"><label class="form-label">原料产品（收货等级）</label><select id="pr-source"></select></div>
+    <div class="form-group"><label class="form-label">可售产品（出货等级）</label><select id="pr-target"></select></div>
+    <div class="form-group"><label class="form-label">加工重量 / 数量</label><input type="number" id="pr-input" placeholder="例如 100" min="0" step="0.01" inputmode="decimal"></div>
+    <div class="form-group"><label class="form-label">其他损耗</label><input type="number" id="pr-other-loss" placeholder="烂果、压伤、挑掉等" min="0" step="0.01" inputmode="decimal"></div>
+    <div class="calc-box" id="processing-preview">可售产出会自动计算</div>
+    <button class="btn-primary" id="btn-processing">确认加工</button>
+    <button class="btn-cancel" id="btn-processing-cancel">取消</button>
+  </div>
+</div>
+
+<!-- 新增用户 Modal -->
+<div class="modal-bg" id="modal-adduser">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">新增用户</div>
+    <div class="form-group"><label class="form-label">用户名</label><input type="text" id="au-user" placeholder="输入登录用户名"></div>
+    <div class="form-group"><label class="form-label">显示名称</label><input type="text" id="au-display" placeholder="输入显示名称"></div>
+    <div class="form-group"><label class="form-label">密码</label><input type="password" id="au-pass" placeholder="输入密码"></div>
+    <div class="form-group"><label class="form-label">角色</label>
+      <select id="au-role">
+        <option value="admin">👑 管理员</option>
+        <option value="sales">📋 销售员</option>
+        <option value="purchase">📥 采购员</option>
+      </select>
+    </div>
+    <button class="btn-primary" id="btn-adduser">添加用户</button>
+    <button class="btn-cancel" id="btn-adduser-cancel">取消</button>
+  </div>
+</div>
+
+<!-- 修改密码 Modal -->
+<div class="modal-bg" id="modal-changepw">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">修改密码</div>
+    <div class="form-group"><label class="form-label">当前密码</label><input type="password" id="cp-old" placeholder="输入当前密码"></div>
+    <div class="form-group"><label class="form-label">新密码</label><input type="password" id="cp-new" placeholder="输入新密码"></div>
+    <div class="form-group"><label class="form-label">确认新密码</label><input type="password" id="cp-confirm" placeholder="再次输入新密码"></div>
+    <button class="btn-primary" id="btn-changepw">修改密码</button>
+    <button class="btn-cancel" id="btn-changepw-cancel">取消</button>
   </div>
 </div>
 

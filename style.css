@@ -185,20 +185,21 @@ html, body {
 
 .toast {
   position: fixed;
-  bottom: 90px;
+  bottom: 96px;
   left: 50%;
   transform: translateX(-50%);
   background: #222;
   color: white;
   padding: 10px 22px;
-  border-radius: 99px;
+  border-radius: 14px;
   font-size: 13px;
   font-weight: 500;
   z-index: 99;
   display: none;
-  white-space: nowrap;
+  white-space: normal;
   max-width: 90%;
   text-align: center;
+  line-height: 1.45;
   transition: opacity 0.3s ease;
 }
 .toast.ok { background: var(--green); }
@@ -244,6 +245,8 @@ html, body {
   padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
   width: 100%;
   max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .modal-handle {
   width: 36px;
@@ -297,6 +300,69 @@ select:focus, input:focus { border-color: var(--green); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary:active { opacity: 0.85; }
 
+.btn-secondary {
+  background: var(--green-light);
+  color: var(--green-dark);
+  border: 1px solid rgba(32, 168, 118, 0.2);
+  padding: 11px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  width: 100%;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.btn-secondary.inline {
+  margin-bottom: 0;
+  width: auto;
+  white-space: nowrap;
+}
+
+.filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.summary-block {
+  margin-bottom: 16px;
+}
+
+.summary-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.print-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.print-btn {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px;
+}
+
 .btn-cancel {
   background: none;
   border: 1px solid var(--border);
@@ -339,6 +405,116 @@ select:focus, input:focus { border-color: var(--green); }
 .order-btn-cancel { border: 1px solid var(--red); color: var(--red); background: none; }
 .order-btn:active { opacity: 0.7; }
 
+.order-line-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.order-draft-list {
+  margin-bottom: 10px;
+}
+
+.order-draft-row,
+.order-line-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  margin-bottom: 7px;
+}
+
+.order-line-row {
+  background: transparent;
+}
+
+.order-draft-title,
+.order-line-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.order-draft-sub,
+.order-line-sub {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+.order-remove {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--red);
+  color: var(--red);
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.empty.small {
+  font-size: 12px;
+  padding: 10px;
+}
+
+@media (max-width: 520px) {
+  .filter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .order-line-inputs {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== 加工 / 损耗 ===== */
+.grade-map {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.grade-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text2);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.mini-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.mini-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.calc-box {
+  background: var(--green-light);
+  color: var(--green-dark);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 4px 0 13px;
+  padding: 10px 12px;
+}
+
 /* ===== 骨架屏加载占位 ===== */
 .skeleton {
   background: linear-gradient(90deg, var(--border) 25%, var(--bg) 50%, var(--border) 75%);
@@ -355,4 +531,98 @@ select:focus, input:focus { border-color: var(--green); }
 .skeleton-card {
   height: 64px;
   margin-bottom: 8px;
+}
+
+/* ===== 顶栏链接按钮 ===== */
+.link-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 7px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text2);
+  line-height: 1.6;
+}
+.link-btn:active { opacity: 0.6; }
+.link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ===== 删除按钮 ===== */
+.del-btn {
+  background: var(--red-light);
+  color: var(--red);
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.del-btn:active { opacity: 0.6; }
+.del-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.del-btn.sm { width: 22px; height: 22px; font-size: 10px; border-radius: 6px; }
+
+/* ===== 登录页面 ===== */
+#page-login {
+  display: none;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+#page-login.active { display: flex; }
+
+.login-wrap {
+  width: 100%;
+  max-width: 360px;
+  padding: 24px;
+}
+
+.login-box {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 32px 24px;
+  border: 1px solid var(--border);
+}
+
+.login-logo {
+  font-size: 56px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.login-title {
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.login-sub {
+  font-size: 13px;
+  text-align: center;
+  color: var(--text2);
+  margin-bottom: 24px;
+}
+
+/* ===== 审计日志样式 ===== */
+.audit-row {
+  padding: 12px 14px !important;
+}
+.chip-mini {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.mono {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  letter-spacing: -0.3px;
 }

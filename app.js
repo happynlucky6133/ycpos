@@ -1,18 +1,17 @@
-/* ===== YCPos 库存系统 v2 - 优化版 ===== */
+/* ===== YCPos 库存系统 v4 - 权限版 ===== */
 (function() {
   'use strict';
 
   // ============================================================
-  // 配置
+  // Supabase 配置
   // ============================================================
-  const API = 'https://script.google.com/macros/s/AKfycbxWSPIE4veSauMMFKCje7NS3ms-moX3eMcdCv0mJHIEHLZEXkjWhGFbw-pqmhainy2kIQ/exec';
-  const DB_NAME = 'YCPosCache';
-  const DB_VERSION = 2;
-  const STORE_NAME = 'data';
-  const DEBOUNCE_MS = 250;
+  const SUPABASE_URL = 'https://qmgguevkxnheyjlagcoi.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_NbWgnMsQVRHc1l1USwIYhQ_nX_eXOUS';
+  const SB = SUPABASE_URL + '/rest/v1';
+  const AUTH = SUPABASE_URL + '/auth/v1';
 
   // ============================================================
-  // 状态管理（使用 Maps 实现 O(1) 查找）
+  // 状态管理
   // ============================================================
   const state = {
     products:    new Map(),
@@ -20,115 +19,317 @@
     customers:   new Map(),
     stockIns:    [],
     stockInDetails: new Map(),
+    processingLogs: [],
     orders:      [],
     orderDetails: new Map(),
+    orderDraft: [],
+    stockInFilter: { from: '', to: '' },
+    orderFilter: { from: '', to: '' },
     currentPage: 'dashboard',
     currentModal: null,
     loading:     false
   };
 
-  // 快速查找缓存
-  let prodNameCache = new Map();  // ProductID -> name
-  let supNameCache = new Map();  // SupplierID -> name
-  let custNameCache = new Map(); // CustomerID -> name
+  let prodNameCache = new Map();
+  let supNameCache = new Map();
+  let custNameCache = new Map();
+
+  const GRADE_RULES = {
+    banana: {
+      label: '香蕉',
+      purchase: ['整串', 'A', 'B', 'C'],
+      sales: ['A', 'B', 'C'],
+      map: { '整串': 'A', A: 'A', B: 'B', C: 'C' }
+    },
+    papaya: {
+      label: '木瓜',
+      purchase: ['A', 'B', 'C'],
+      sales: ['A', 'B'],
+      map: { A: 'A', B: 'B', C: 'B' }
+    },
+    durian: {
+      label: '榴莲',
+      purchase: ['AA', 'A', 'AB', 'B', 'BC', 'C', 'CC', 'CCC'],
+      sales: ['A', 'B', 'C', 'D'],
+      map: { AA: 'A', A: 'A', AB: 'B', B: 'B', BC: 'C', C: 'C', CC: 'D', CCC: 'D' }
+    }
+  };
 
   // ============================================================
-  // IndexedDB - 离线数据缓存
+  // 当前用户
   // ============================================================
-  function openDB() {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME);
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+  let currentUser = null;
+  let authToken = '';
+
+  // 从 localStorage 恢复登录状态
+  try {
+    authToken = localStorage.getItem('ycpos_auth_token') || '';
+    const saved = localStorage.getItem('ycpos_user');
+    if (saved) currentUser = JSON.parse(saved);
+  } catch(e) {}
+
+  // ============================================================
+  // 权限工具
+  // ============================================================
+  function hasRole(roles) {
+    if (!currentUser) return false;
+    return roles.includes(currentUser.Role);
+  }
+
+  function canSeePrices() {
+    return hasRole(['admin', 'sales']);
+  }
+
+  function canCreateOrder() {
+    return hasRole(['admin', 'sales']);
+  }
+
+  function canCompleteOrder() {
+    return hasRole(['admin', 'sales']);
+  }
+
+  function canCancelOrder() {
+    return hasRole(['admin', 'sales']);
+  }
+
+  function canPrepareOrder() {
+    return hasRole(['admin', 'purchase', 'warehouse']);
+  }
+
+  function canShowNav(page) {
+    if (!currentUser) return true;
+    const role = currentUser.Role;
+    if (role === 'admin') return true;
+    if (role === 'sales') return !['stockin', 'processing', 'suppliers', 'customers', 'audit'].includes(page);
+    if (role === 'purchase' || role === 'warehouse') return !['customers', 'audit'].includes(page);
+    return true;
+  }
+
+  function canShowFab(page) {
+    if (!currentUser) return false;
+    const role = currentUser.Role;
+    // 只在有对应 modal 的页面显示 + 号
+    const fabPages = ['stockin', 'products', 'orders', 'processing', 'suppliers', 'customers'];
+    if (!fabPages.includes(page)) return false;
+    if (role === 'admin') return true;
+    if (role === 'sales') return page === 'orders';
+    if (role === 'purchase') return page === 'stockin' || page === 'processing';
+    return false;
+  }
+
+  function canUseModal(modalId) {
+    if (!currentUser) return false;
+    const role = currentUser.Role;
+    // 所有 modal 只能 admin 操作，除了进货（purchase）和订单（sales）
+    if (role === 'admin') return true;
+    if (role === 'purchase') return modalId === 'modal-si' || modalId === 'modal-processing';
+    if (role === 'sales') return modalId === 'modal-order';
+    return false;
+  }
+
+function applyPermissions() {
+    if (!currentUser) return;
+
+    // 隐藏越权的导航按钮
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      const page = btn.dataset.page;
+      btn.style.display = canShowNav(page) ? '' : 'none';
     });
+
+    // 审计日志页仅 admin 可见
+    const auditNav = document.getElementById('nav-audit');
+    if (auditNav) auditNav.style.display = isAdmin() ? '' : 'none';
+
+    // 控制 FAB
+    const fab = document.getElementById('fab');
+    fab.style.display = canShowFab(state.currentPage) ? 'flex' : 'none';
+
+    // 用户显示
+    const ud = document.getElementById('user-display');
+    ud.textContent = '👤 ' + currentUser.DisplayName + ' (退出)';
+    ud.style.display = 'inline';
+
+    // admin 专用按钮（👤+ 添加用户）
+    const adminActions = document.getElementById('admin-actions');
+    adminActions.style.display = 'inline';
+    document.getElementById('btn-add-user').style.display = isAdmin() ? 'inline' : 'none';
   }
 
-  async function cacheData(data) {
-    try {
-      const db = await openDB();
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      store.put(data, 'lastData');
-      store.put(Date.now(), 'timestamp');
-      return new Promise((resolve, reject) => {
-        tx.oncomplete = resolve;
-        tx.onerror = () => reject(tx.error);
-      });
-    } catch (e) {
-      console.warn('IndexedDB write failed:', e);
+  // ============================================================
+  // Supabase API
+  // ============================================================
+  function sbHeaders(extra = {}) {
+    return Object.assign({
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + (authToken || SUPABASE_KEY)
+    }, extra);
+  }
+
+  function handleApiError(text) {
+    if (String(text || '').includes('JWT expired')) {
+      showToast('登录已过期，请重新登录', 'err');
+      doLogout();
+      return new Error('登录已过期，请重新登录');
     }
+    return new Error(text);
   }
 
-  async function getCachedData() {
-    try {
-      const db = await openDB();
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const [data, timestamp] = await Promise.all([
-        new Promise((r) => { const g = store.get('lastData'); g.onsuccess = () => r(g.result); }),
-        new Promise((r) => { const g = store.get('timestamp'); g.onsuccess = () => r(g.result); })
-      ]);
-      return data ? { data, timestamp } : null;
-    } catch (e) {
-      console.warn('IndexedDB read failed:', e);
-      return null;
-    }
-  }
-
-  // ============================================================
-  // 防抖工具
-  // ============================================================
-  function debounce(fn, ms) {
-    let timer = null;
-    return function(...args) {
-      clearTimeout(timer);
-      timer = setTimeout(() => fn.apply(this, args), ms);
-    };
-  }
-
-  // ============================================================
-  // API 调用
-  // ============================================================
-  async function api(params) {
-    const url = API + '?' + new URLSearchParams(params).toString();
-    const res = await fetch(url);
+  async function sbGet(table, opts = {}) {
+    const params = new URLSearchParams();
+    if (opts.select) params.set('select', opts.select);
+    if (opts.order)  params.set('order', opts.order);
+    const url = SB + '/' + table + '?' + params.toString();
+    const res = await fetch(url, {
+      headers: sbHeaders()
+    });
+    if (!res.ok) throw handleApiError(await res.text());
     return res.json();
   }
 
+  async function sbGetOptional(table, opts = {}) {
+    try {
+      return await sbGet(table, opts);
+    } catch (e) {
+      console.warn('Optional table unavailable:', table, e.message);
+      return [];
+    }
+  }
+
+  async function sbPost(table, data) {
+    const url = SB + '/' + table;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: sbHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw handleApiError('HTTP ' + res.status + ': ' + await res.text());
+    try { return await res.json(); } catch { return { success: true }; }
+  }
+
+  async function sbPatch(table, idCol, idVal, data) {
+    const url = SB + '/' + table + '?' + idCol + '=eq.' + encodeURIComponent(idVal);
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: sbHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw handleApiError(await res.text());
+    return true;
+  }
+
+  async function sbGetFiltered(table, col, val, opts = {}) {
+    const params = new URLSearchParams();
+    params.set(col, 'eq.' + encodeURIComponent(val));
+    if (opts.select) params.set('select', opts.select);
+    const url = SB + '/' + table + '?' + params.toString();
+    const res = await fetch(url, {
+      headers: sbHeaders()
+    });
+    if (!res.ok) throw handleApiError(await res.text());
+    return res.json();
+  }
+
+  async function sbDelete(table, idCol, idVal) {
+    const url = SB + '/' + table + '?' + idCol + '=eq.' + encodeURIComponent(idVal);
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: sbHeaders()
+    });
+    if (!res.ok) throw handleApiError(await res.text());
+    return true;
+  }
+
+  async function sbRpc(fnName, data) {
+    const res = await fetch(SB + '/rpc/' + fnName, {
+      method: 'POST',
+      headers: sbHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(data || {})
+    });
+    if (!res.ok) throw handleApiError(await res.text());
+    const text = await res.text();
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { return text; }
+  }
+
   // ============================================================
-  // 数据解析与索引构建
+  // 登录 / 登出
   // ============================================================
-  function buildIndexes(data) {
-    // 转换为 Maps
-    state.products = new Map((data.products || []).map(p => [p.ProductID, p]));
-    state.suppliers = new Map((data.suppliers || []).map(s => [s.SupplierID, s]));
-    state.customers = new Map((data.customers || []).map(c => [c.CustomerID, c]));
-    state.stockIns = data.stockIns || [];
-    state.stockInDetails = new Map((data.stockInDetails || []).map(d => [d.StockInID, d]));
-    state.orders = data.orders || [];
-    state.orderDetails = new Map((data.orderDetails || []).map(d => [d.POID, d]));
+  async function doLogin() {
+    const email = document.getElementById('login-user').value.trim();
+    const password = document.getElementById('login-pass').value.trim();
+    const errEl = document.getElementById('login-error');
+    if (!email || !password) {
+      errEl.textContent = '请输入 Email 和密码';
+      errEl.style.display = 'block';
+      return;
+    }
+    errEl.style.display = 'none';
 
-    // 构建名称缓存
-    prodNameCache = new Map();
-    state.products.forEach((p, id) => prodNameCache.set(id, p.ProductName));
+    const btn = document.getElementById('login-btn');
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    try {
+      const loginRes = await fetch(AUTH + '/token?grant_type=password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY
+        },
+        body: JSON.stringify({ email, password })
+      });
+      if (!loginRes.ok) throw new Error('Email 或密码错误');
+      const session = await loginRes.json();
+      authToken = session.access_token;
+      localStorage.setItem('ycpos_auth_token', authToken);
 
-    supNameCache = new Map();
-    state.suppliers.forEach((s, id) => supNameCache.set(id, s.SupplierName));
+      const profiles = await sbGetFiltered('staff_profiles', 'id', session.user.id, { select: '*' });
+      if (!profiles || profiles.length === 0 || profiles[0].Active === false) {
+        throw new Error('这个账号还没有员工权限');
+      }
+      const profile = profiles[0];
 
-    custNameCache = new Map();
-    state.customers.forEach((c, id) => custNameCache.set(id, c.CustomerName));
+      currentUser = {
+        Username: email,
+        DisplayName: profile.DisplayName || email,
+        Role: profile.Role
+      };
+      localStorage.setItem('ycpos_user', JSON.stringify(currentUser));
+
+      // 隐藏登录页，显示主应用
+      document.getElementById('page-login').classList.remove('active');
+      document.getElementById('app-main').style.display = 'flex';
+
+      applyPermissions();
+      showToast('欢迎，' + currentUser.DisplayName + '！', 'ok');
+      loadAll();
+    } catch (e) {
+      errEl.textContent = '登录失败: ' + e.message;
+      errEl.style.display = 'block';
+    }
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+
+  function doLogout() {
+    currentUser = null;
+    authToken = '';
+    localStorage.removeItem('ycpos_user');
+    localStorage.removeItem('ycpos_auth_token');
+    document.getElementById('app-main').style.display = 'none';
+    document.getElementById('page-login').classList.add('active');
+    document.getElementById('login-pass').value = '';
+    document.getElementById('login-error').style.display = 'none';
+    // 重置页面
+    document.querySelectorAll('.nav-btn').forEach(b => b.style.display = '');
+    document.getElementById('fab').style.display = 'none';
+    document.getElementById('user-display').style.display = 'none';
+    showToast('已退出登录', 'ok');
   }
 
   // ============================================================
   // 数据加载
   // ============================================================
-  async function loadAll(showCacheFirst = true) {
+  async function loadAll() {
     if (state.loading) return;
     state.loading = true;
     const btn = document.getElementById('sync-btn');
@@ -136,38 +337,26 @@
     btn.textContent = '加载中...';
 
     try {
-      // 先展示缓存数据（如果可用）
-      if (showCacheFirst) {
-        const cached = await getCachedData();
-        if (cached && cached.data) {
-          buildIndexes(cached.data);
-          renderCurrentPage();
-          const t = new Date(cached.timestamp);
-          document.getElementById('sync-time').textContent = '缓存数据 ' + t.toTimeString().slice(0,5);
-        }
-      }
+      const [products, suppliers, customers, stockIns, stockInDetails, processingLogs, orders, orderDetails] = await Promise.all([
+        sbGet('products', { order: 'id' }),
+        sbGetOptional('suppliers', { order: 'id' }),
+        sbGetOptional('customers', { order: 'id' }),
+        sbGetOptional('stock_ins', { order: 'id' }),
+        sbGetOptional('stock_in_details', { order: 'id' }),
+        sbGetOptional('processing_logs', { order: 'id' }),
+        sbGetOptional('purchase_orders', { order: 'id' }),
+        sbGetOptional('po_details', { order: 'id' })
+      ]);
 
-      // 从网络获取最新数据
-      const data = await api({ action: 'getAll' });
-      if (data.error) throw new Error(data.error);
-
-      buildIndexes(data);
-      // 缓存到 IndexedDB（不阻塞渲染）
-      cacheData(data);
-
+      buildIndexes({ products, suppliers, customers, stockIns, stockInDetails, processingLogs, orders, orderDetails });
       populateSelects();
       renderCurrentPage();
+
       const t = new Date();
       document.getElementById('sync-time').textContent = '已同步 ' + t.toTimeString().slice(0,5);
     } catch (e) {
-      // 如果网络失败但已有缓存数据，不显示错误
-      const cached = await getCachedData();
-      if (!cached || !cached.data) {
-        showToast('加载失败: ' + e.message, 'err');
-        document.getElementById('sync-time').textContent = '加载失败，请刷新';
-      } else {
-        showToast('未能获取最新数据，显示缓存版本', 'err');
-      }
+      showToast('加载失败: ' + e.message, 'err');
+      document.getElementById('sync-time').textContent = '加载失败';
     }
 
     btn.disabled = false;
@@ -176,23 +365,56 @@
   }
 
   // ============================================================
+  // 数据解析
+  // ============================================================
+  function buildIndexes(data) {
+    state.products = new Map((data.products || []).map(p => [p.ProductID, p]));
+    state.suppliers = new Map((data.suppliers || []).map(s => [s.SupplierID, s]));
+    state.customers = new Map((data.customers || []).map(c => [c.CustomerID, c]));
+    state.stockIns = data.stockIns || [];
+    state.stockInDetails = new Map((data.stockInDetails || []).map(d => [d.StockInID, d]));
+    state.processingLogs = data.processingLogs || [];
+    state.orders = data.orders || [];
+    state.orderDetails = new Map();
+    (data.orderDetails || []).forEach(d => {
+      if (!state.orderDetails.has(d.POID)) state.orderDetails.set(d.POID, []);
+      state.orderDetails.get(d.POID).push(d);
+    });
+
+    prodNameCache = new Map();
+    state.products.forEach((p, id) => prodNameCache.set(id, p.ProductName));
+    supNameCache = new Map();
+    state.suppliers.forEach((s, id) => supNameCache.set(id, s.SupplierName));
+    custNameCache = new Map();
+    state.customers.forEach((c, id) => custNameCache.set(id, c.CustomerName));
+  }
+
+  // ============================================================
   // 选择框填充
   // ============================================================
   function populateSelects() {
-    // 供应商下拉
-    const supSelect = document.getElementById('f-sup');
-    supSelect.innerHTML = Array.from(state.suppliers.values())
+    const sup = document.getElementById('f-sup');
+    if (sup) sup.innerHTML = Array.from(state.suppliers.values())
       .map(s => `<option value="${s.SupplierID}">${escapeHTML(s.SupplierName)}</option>`).join('');
 
-    // 产品下拉（进货 & 订单共用）
     ['f-prod', 'o-prod'].forEach(id => {
-      document.getElementById(id).innerHTML = Array.from(state.products.values())
-        .map(p => `<option value="${p.ProductID}">${escapeHTML(p.ProductName)} (${p.Grade})</option>`).join('');
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = Array.from(state.products.values())
+        .map(p => `<option value="${p.ProductID}">${escapeHTML(p.ProductName)} (${p.Grade || ''})</option>`).join('');
     });
 
-    // 客户下拉
-    document.getElementById('o-cust').innerHTML = Array.from(state.customers.values())
+    ['pr-source', 'pr-target'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = Array.from(state.products.values())
+        .map(p => `<option value="${p.ProductID}">${escapeHTML(formatProductLabel(p))}</option>`).join('');
+    });
+
+    const cust = document.getElementById('o-cust');
+    if (cust) cust.innerHTML = Array.from(state.customers.values())
       .map(c => `<option value="${c.CustomerID}">${escapeHTML(c.CustomerName)}</option>`).join('');
+
+    // 初始化数量单位标签
+    updateQtyLabels();
   }
 
   // ============================================================
@@ -200,15 +422,69 @@
   // ============================================================
   function escapeHTML(str) {
     if (!str) return '';
-    return String(str).replace(/[&<>"']/g, function(m) {
-      return ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#39;' })[m];
-    });
+    return String(str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
   }
 
   function getProdName(id) { return prodNameCache.get(id) || id; }
   function getSupName(id)  { return supNameCache.get(id) || id; }
   function getCustName(id) { return custNameCache.get(id) || id; }
   function getProd(id)     { return state.products.get(id); }
+  function getProdUnit(id) {
+    const p = state.products.get(id);
+    return p ? (p.Unit || 'kg') : 'kg';
+  }
+
+  function formatProductLabel(p) {
+    if (!p) return '';
+    return p.ProductName + (p.Grade ? ' ' + p.Grade : '') + ' · ' + Number(p.StockBalance || 0) + ' ' + (p.Unit || 'kg');
+  }
+
+  function normalizeFruitName(name) {
+    const text = String(name || '').toLowerCase();
+    if (text.includes('banana') || text.includes('蕉')) return 'banana';
+    if (text.includes('papaya') || text.includes('木瓜')) return 'papaya';
+    if (text.includes('durian') || text.includes('榴莲') || text.includes('榴槤')) return 'durian';
+    return '';
+  }
+
+  function getGradeRuleForProduct(product) {
+    return GRADE_RULES[normalizeFruitName(product && product.ProductName)] || null;
+  }
+
+  function getMappedSalesGrade(product) {
+    const rule = getGradeRuleForProduct(product);
+    if (!rule) return '';
+    return rule.map[product.Grade] || '';
+  }
+
+  function fmtNum(n) {
+    const v = Number(n || 0);
+    return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '');
+  }
+
+  function fmtMoney(n) {
+    return 'RM ' + Number(n || 0).toFixed(2);
+  }
+
+  function getDateText(value) {
+    return String(value || '').slice(0, 10);
+  }
+
+  function inDateRange(dateValue, filter) {
+    const date = getDateText(dateValue);
+    if (!date) return false;
+    if (filter.from && date < filter.from) return false;
+    if (filter.to && date > filter.to) return false;
+    return true;
+  }
+
+  function sumOrderTotal(order, lines) {
+    return Number(order.TotalAmount || (lines || []).reduce((sum, d) => {
+      const qty = Number(d.QTY || 0);
+      const price = Number(d.UnitPrice || 0);
+      return sum + qty * price;
+    }, 0));
+  }
 
   function stockBadge(n) {
     n = Number(n);
@@ -217,11 +493,7 @@
     return '<span class="badge br">告急</span>';
   }
 
-  // ============================================================
-  // Toast 提示
-  // ============================================================
   let toastTimer = null;
-
   function showToast(msg, type) {
     const t = document.getElementById('toast');
     if (!t) return;
@@ -236,8 +508,83 @@
     }, 3000);
   }
 
+  function getErrorMessage(e) {
+    let msg = e && e.message ? e.message : String(e || '未知错误');
+    try {
+      const parsed = JSON.parse(msg);
+      msg = parsed.message || parsed.details || msg;
+    } catch (_) {}
+    return msg;
+  }
+
+  // 审计日志
+  async function auditLog(action, target, detail) {
+    try {
+      await sbRpc('write_audit', {
+        p_action: action,
+        p_target: target || '',
+        p_detail: detail || ''
+      });
+    } catch (e) { /* 审计日志记录失败不打断主流程 */ }
+  }
+
+  async function loadAuditLogs() {
+    const container = document.getElementById('audit-list');
+    try {
+      const logs = await sbGet('audit_logs', { order: 'id.desc' });
+      renderAuditLog(logs, container);
+    } catch (e) {
+      container.innerHTML = '<div class="empty">加载失败: ' + escapeHTML(e.message) + '</div>';
+    }
+  }
+
+  function renderAuditLog(logs, container) {
+    if (!logs || logs.length === 0) {
+      container.innerHTML = '<div class="empty">暂无审计记录</div>';
+      return;
+    }
+    container.innerHTML = logs.map(l => {
+      const ts = String(l.Timestamp || '').slice(0, 16).replace('T', ' ');
+      return `<div class="card audit-row">
+        <div class="row-flex">
+          <span class="mono" style="font-size:11px;color:var(--text2)">${escapeHTML(ts)}</span>
+          <span class="chip" style="background:var(--blue-light);color:var(--blue);font-size:11px">${escapeHTML(l.Action)}</span>
+        </div>
+        <div style="font-size:13px;margin-top:4px">
+          <strong>${escapeHTML(l.User)}</strong>
+          ${l.Target ? ' · ' + escapeHTML(l.Target) : ''}
+        </div>
+        ${l.Detail ? '<div class="row-sub">' + escapeHTML(l.Detail) + '</div>' : ''}
+      </div>`;
+    }).join('');
+  }
+
+  // 根据所选产品动态更新数量单位的标签
+  function updateQtyLabels() {
+    const fProd = document.getElementById('f-prod');
+    const oProd = document.getElementById('o-prod');
+    const fLabel = document.getElementById('f-qty-label');
+    const oLabel = document.getElementById('o-qty-label');
+    if (fProd && fLabel) {
+      const unit = getProdUnit(fProd.value);
+      fLabel.textContent = '数量 (' + unit + ')';
+    }
+    if (oProd && oLabel) {
+      const unit = getProdUnit(oProd.value);
+      oLabel.textContent = '数量 (' + unit + ')';
+    }
+  }
+
+  function debounce(fn, ms) {
+    let timer = null;
+    return function(...args) {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), ms);
+    };
+  }
+
   // ============================================================
-  // 页面渲染（使用模板字符串 + innerHTML 由浏览器优化）
+  // 页面渲染
   // ============================================================
   function renderCurrentPage() {
     const page = state.currentPage;
@@ -245,19 +592,27 @@
     else if (page === 'products')  renderProducts();
     else if (page === 'stockin')   renderStockIn();
     else if (page === 'orders')    renderOrders();
+    else if (page === 'processing') renderProcessing();
+    else if (page === 'suppliers') renderSuppliers();
     else if (page === 'customers') renderCustomers();
+    else if (page === 'audit')     loadAuditLogs();
   }
 
   function renderDashboard() {
-    const total = Array.from(state.products.values())
-      .reduce((a, p) => a + Number(p.StockBalance || 0), 0);
+    const stockByUnit = Array.from(state.products.values()).reduce((acc, p) => {
+      const unit = p.Unit || 'kg';
+      acc[unit] = (acc[unit] || 0) + Number(p.StockBalance || 0);
+      return acc;
+    }, {});
+    const stockText = Object.entries(stockByUnit)
+      .map(([unit, qty]) => `${fmtNum(qty)} <span class="stat-unit">${escapeHTML(unit)}</span>`)
+      .join('<br>') || '-';
 
     document.getElementById('s-products').textContent = state.products.size;
-    document.getElementById('s-stock').innerHTML = total + ' <span class="stat-unit">kg</span>';
+    document.getElementById('s-stock').innerHTML = stockText;
     document.getElementById('s-stockin').textContent = state.stockIns.length;
     document.getElementById('s-suppliers').textContent = state.suppliers.size;
 
-    // 产品概览
     const prodContainer = document.getElementById('dash-products');
     if (state.products.size === 0) {
       prodContainer.innerHTML = '<div class="empty">暂无产品</div>';
@@ -266,17 +621,16 @@
         `<div class="card row-flex">
           <div>
             <div class="row-title">${escapeHTML(p.ProductName)}</div>
-            <div class="row-sub">等级 ${p.Grade} · ${stockBadge(p.StockBalance)}</div>
+            <div class="row-sub">等级 ${p.Grade || '-'} · ${stockBadge(p.StockBalance)}${p.Note ? ' · ' + escapeHTML(p.Note) : ''}</div>
           </div>
           <div>
             <div class="stock-num">${Number(p.StockBalance || 0)}</div>
-            <div class="stock-unit">${p.Unit}</div>
+            <div class="stock-unit">${p.Unit || 'kg'}</div>
           </div>
         </div>`
       ).join('');
     }
 
-    // 最近进货
     const recentContainer = document.getElementById('dash-recent');
     const recent = state.stockIns.slice(-3).reverse();
     if (recent.length === 0) {
@@ -289,128 +643,387 @@
             <span class="mono">${s.StockInID}</span>
             <span style="font-size:11px;color:var(--text2)">${String(s.Date).slice(0,10)}</span>
           </div>
-          <div style="font-size:13px;color:var(--text)">
-            ${d ? escapeHTML(getProdName(d.ProductID)) : '-'} · <strong>${d ? d.Qty : '-'} kg</strong>
+          <div style="font-size:13px">
+            ${d ? escapeHTML(getProdName(d.ProductID)) : '-'} · <strong>${d ? d.Qty + ' ' + getProdUnit(d.ProductID) : '-'}</strong>
           </div>
-          <div class="row-sub">${escapeHTML(getSupName(s.SupplierID))}</div>
+          <div class="row-sub">${escapeHTML(getSupName(s.SupplierID))}${s.Note ? ' · ' + escapeHTML(s.Note) : ''}</div>
         </div>`;
       }).join('');
     }
   }
 
+  const isAdmin = () => currentUser && currentUser.Role === 'admin';
+
   function renderProducts() {
     const q = (document.getElementById('product-search').value || '').toLowerCase();
     const list = Array.from(state.products.values())
       .filter(p => p.ProductName.toLowerCase().includes(q));
-
     const container = document.getElementById('product-list');
     if (list.length === 0) {
       container.innerHTML = '<div class="empty">没有找到产品</div>';
       return;
     }
-
     container.innerHTML = list.map(p =>
       `<div class="card row-flex">
         <div>
           <div class="row-title">${escapeHTML(p.ProductName)}</div>
-          <div class="row-sub">${p.ProductID} · 等级 ${p.Grade} · ${stockBadge(p.StockBalance)}</div>
+          <div class="row-sub">${p.ProductID} · 等级 ${p.Grade || '-'} · ${stockBadge(p.StockBalance)}${p.Note ? ' · ' + escapeHTML(p.Note) : ''}</div>
         </div>
-        <div>
-          <div class="stock-num">${Number(p.StockBalance || 0)}</div>
-          <div class="stock-unit">${p.Unit}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="text-align:right">
+            <div class="stock-num">${Number(p.StockBalance || 0)}</div>
+            <div class="stock-unit">${p.Unit || 'kg'}</div>
+          </div>
+          ${isAdmin() ? `<button class="del-btn" data-type="product" data-id="${p.ProductID}">✕</button>` : ''}
         </div>
       </div>`
     ).join('');
+    attachDeleteHandlers(container);
   }
 
-  // 防抖搜索版本
-  const debouncedRenderProducts = debounce(renderProducts, DEBOUNCE_MS);
-  const debouncedRenderCustomers = debounce(renderCustomers, DEBOUNCE_MS);
+  function renderSuppliers() {
+    const q = (document.getElementById('supplier-search').value || '').toLowerCase();
+    const list = Array.from(state.suppliers.values())
+      .filter(s => (s.SupplierName || '').toLowerCase().includes(q));
+    const container = document.getElementById('supplier-list');
+    if (list.length === 0) {
+      container.innerHTML = '<div class="empty">暂无供应商</div>';
+      return;
+    }
+    container.innerHTML = list.map(s => {
+      let sub = s.SupplierID;
+      if (s.Phone) sub += ' · 📞 ' + escapeHTML(s.Phone);
+      if (s.Note)  sub += ' · ' + escapeHTML(s.Note);
+      return `<div class="card row-flex">
+        <div>
+          <div class="row-title">${escapeHTML(s.SupplierName)}</div>
+          <div class="row-sub">${sub}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:22px">🏭</span>
+          ${isAdmin() ? `<button class="del-btn" data-type="supplier" data-id="${s.SupplierID}">✕</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    attachDeleteHandlers(container);
+  }
 
   function renderStockIn() {
     const container = document.getElementById('stockin-list');
-    if (state.stockIns.length === 0) {
+    const list = state.stockIns.filter(s => inDateRange(s.Date, state.stockInFilter));
+    if (list.length === 0) {
       container.innerHTML = '<div class="empty">暂无进货记录</div>';
       return;
     }
-
-    container.innerHTML = [...state.stockIns].reverse().map(s => {
+    container.innerHTML = [...list].reverse().map(s => {
       const d = state.stockInDetails.get(s.StockInID);
       return `<div class="card">
         <div class="row-flex" style="margin-bottom:5px">
           <span class="mono">${s.StockInID}</span>
-          <span style="font-size:11px;color:var(--text2)">${String(s.Date).slice(0,10)}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:11px;color:var(--text2)">${String(s.Date).slice(0,10)}</span>
+            ${isAdmin() ? `<button class="del-btn sm" data-type="stockin" data-id="${s.StockInID}">✕</button>` : ''}
+          </div>
         </div>
         <div style="font-size:13px">
-          ${d ? escapeHTML(getProdName(d.ProductID)) : '-'} · <strong>${d ? d.Qty : '-'} kg</strong>
+          ${d ? escapeHTML(getProdName(d.ProductID)) : '-'} · <strong>${d ? d.Qty + ' ' + getProdUnit(d.ProductID) : '-'}</strong>
         </div>
         <div class="row-sub">${escapeHTML(getSupName(s.SupplierID))}</div>
+        ${s.Note ? '<div class="row-sub">' + escapeHTML(s.Note) + '</div>' : ''}
+        <div class="print-actions"><button class="print-btn" data-print-stockin="${s.StockInID}">打印进货证明</button></div>
+      </div>`;
+    }).join('');
+    attachDeleteHandlers(container);
+    container.querySelectorAll('[data-print-stockin]').forEach(btn => {
+      btn.addEventListener('click', () => printStockIn(btn.dataset.printStockin));
+    });
+  }
+
+  function renderProcessing() {
+    renderGradeRules();
+    renderLossSummary();
+    renderProcessingLogs();
+  }
+
+  function renderGradeRules() {
+    const container = document.getElementById('grade-rule-list');
+    if (!container) return;
+    container.innerHTML = Object.values(GRADE_RULES).map(rule => {
+      const pairs = Object.entries(rule.map)
+        .map(([from, to]) => `<span class="grade-pill">${escapeHTML(from)} → ${escapeHTML(to)}</span>`)
+        .join('');
+      return `<div class="card">
+        <div class="row-flex" style="align-items:flex-start;gap:10px">
+          <div>
+            <div class="row-title">${escapeHTML(rule.label)}</div>
+            <div class="row-sub">收货：${rule.purchase.map(escapeHTML).join(' / ')}</div>
+            <div class="row-sub">出货：${rule.sales.map(escapeHTML).join(' / ')}</div>
+          </div>
+          <span class="chip chip-d">等级转换</span>
+        </div>
+        <div class="grade-map">${pairs}</div>
       </div>`;
     }).join('');
   }
 
-  const STATUS_LABELS = { pending: '待处理', done: '完成', cancelled: '取消' };
-  const STATUS_CHIPS = { pending: 'chip-p', done: 'chip-d', cancelled: 'chip-c' };
-
-  function renderOrders() {
-    const container = document.getElementById('orders-list');
-    if (state.orders.length === 0) {
-      container.innerHTML = '<div class="empty">暂无采购订单</div>';
+  function renderLossSummary() {
+    const container = document.getElementById('loss-summary');
+    if (!container) return;
+    if (!state.processingLogs.length) {
+      container.innerHTML = '<div class="empty">暂无损耗记录</div>';
       return;
     }
 
-    container.innerHTML = [...state.orders].reverse().map(o => {
-      const d = state.orderDetails.get(o.POID);
+    const totals = state.processingLogs.reduce((acc, log) => {
+      acc.input += Number(log.InputQty || 0);
+      acc.output += Number(log.OutputQty || 0);
+      acc.stem += Number(log.StemLoss || 0);
+      acc.other += Number(log.OtherLoss || 0);
+      return acc;
+    }, { input: 0, output: 0, stem: 0, other: 0 });
+    const totalLoss = totals.stem + totals.other;
+    const lossRate = totals.input ? (totalLoss / totals.input * 100) : 0;
+
+    container.innerHTML = `<div class="mini-stat-grid">
+      <div class="mini-stat"><div class="stat-label">加工总量</div><div class="stat-value">${fmtNum(totals.input)}</div></div>
+      <div class="mini-stat"><div class="stat-label">可售产出</div><div class="stat-value">${fmtNum(totals.output)}</div></div>
+      <div class="mini-stat"><div class="stat-label">总损耗</div><div class="stat-value">${fmtNum(totalLoss)}</div></div>
+      <div class="mini-stat"><div class="stat-label">损耗率</div><div class="stat-value">${lossRate.toFixed(1)}%</div></div>
+    </div>`;
+  }
+
+  function renderProcessingLogs() {
+    const container = document.getElementById('processing-list');
+    if (!container) return;
+    if (!state.processingLogs.length) {
+      container.innerHTML = '<div class="empty">暂无加工记录。请先在 Supabase 执行 supabase_processing.sql，再用右下角 + 新增。</div>';
+      return;
+    }
+    container.innerHTML = [...state.processingLogs].reverse().map(log => {
+      const source = getProd(log.SourceProductID);
+      const target = getProd(log.TargetProductID);
+      const input = Number(log.InputQty || 0);
+      const stem = Number(log.StemLoss || 0);
+      const other = Number(log.OtherLoss || 0);
+      const lossRate = input ? ((stem + other) / input * 100) : 0;
+      return `<div class="card">
+        <div class="row-flex" style="margin-bottom:5px">
+          <span class="mono">${escapeHTML(log.ProcessID)}</span>
+          <span style="font-size:11px;color:var(--text2)">${String(log.Date || '').slice(0,10)}</span>
+        </div>
+        <div style="font-size:13px">${escapeHTML(formatProductLabel(source))} → <strong>${escapeHTML(formatProductLabel(target))}</strong></div>
+        <div class="row-sub">加工 ${fmtNum(input)} · 产出 ${fmtNum(log.OutputQty)} · 损耗 ${fmtNum(stem + other)} · 损耗率 ${lossRate.toFixed(1)}%</div>
+      </div>`;
+    }).join('');
+  }
+
+  const STATUS_LABELS = { pending: '待处理', ready: '已备货', loaded: '已上车', done: '完成', cancelled: '取消' };
+  const STATUS_CHIPS = { pending: 'chip-p', ready: 'chip-p', loaded: 'chip-d', done: 'chip-d', cancelled: 'chip-c' };
+
+  function renderOrders() {
+    const container = document.getElementById('orders-list');
+    const orders = state.orders.filter(o => inDateRange(o.Date, state.orderFilter));
+    renderOrderSummary(orders);
+    if (orders.length === 0) {
+      container.innerHTML = '<div class="empty">暂无订单</div>';
+      return;
+    }
+
+    container.innerHTML = [...orders].reverse().map(o => {
+      const lines = state.orderDetails.get(o.POID) || [];
       const st = o.Status || 'pending';
       const label = STATUS_LABELS[st] || st;
       const chipClass = STATUS_CHIPS[st] || 'chip-p';
-      const productName = d ? escapeHTML(getProdName(d.ProductID)) : '-';
-      const qty = d ? d.QTY : '-';
       const custName = escapeHTML(getCustName(o.CustomerID));
       const date = String(o.Date).slice(0,10);
-
-      let actions = '';
-      if (st === 'pending') {
-        actions = `<div class="order-actions">
-          <button class="order-btn order-btn-done" data-po="${o.POID}" data-status="done" data-pid="${d ? d.ProductID : ''}" data-qty="${d ? d.QTY : 0}">✓ 完成</button>
-          <button class="order-btn order-btn-cancel" data-po="${o.POID}" data-status="cancelled">✗ 取消</button>
+      const total = sumOrderTotal(o, lines);
+      const lineHtml = lines.length ? lines.map(d => {
+        const qty = Number(d.QTY || 0);
+        const price = Number(d.UnitPrice || 0);
+        const lineTotal = Number(d.LineTotal || qty * price);
+        const priceText = canSeePrices()
+          ? ` x ${fmtMoney(price)}${lineTotal ? ' = ' + fmtMoney(lineTotal) : ''}`
+          : '';
+        return `<div class="order-line-row">
+          <div>
+            <div class="order-line-title">${escapeHTML(getProdName(d.ProductID))}</div>
+            <div class="order-line-sub">${fmtNum(qty)} ${escapeHTML(getProdUnit(d.ProductID))}${priceText}</div>
+          </div>
+          ${canSeePrices() ? `<strong>${fmtMoney(lineTotal)}</strong>` : ''}
         </div>`;
-      }
+      }).join('') : '<div class="empty small">没有产品明细</div>';
+
+      const actionButtons = [];
+      if (st === 'pending' && canPrepareOrder()) actionButtons.push(`<button class="order-btn order-btn-done" data-po="${o.POID}" data-status="ready">✓ 确认备货</button>`);
+      if (st === 'ready' && canPrepareOrder()) actionButtons.push(`<button class="order-btn order-btn-done" data-po="${o.POID}" data-status="loaded">✓ 确认上车</button>`);
+      if (st === 'loaded' && canCompleteOrder()) actionButtons.push(`<button class="order-btn order-btn-done" data-po="${o.POID}" data-status="done">✓ 完成</button>`);
+      if (['pending', 'ready', 'loaded'].includes(st) && canCancelOrder()) actionButtons.push(`<button class="order-btn order-btn-cancel" data-po="${o.POID}" data-status="cancelled">✗ 取消</button>`);
+      const actions = actionButtons.length ? `<div class="order-actions">${actionButtons.join('')}</div>` : '';
 
       return `<div class="card">
         <div class="row-flex" style="margin-bottom:5px">
-          <span class="mono">${o.POID}</span>
-          <span class="chip ${chipClass}">${label}</span>
+      <span class="mono">${o.POID}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="chip ${chipClass}">${label}</span>
+            ${isAdmin() ? `<button class="del-btn sm" data-type="order" data-id="${o.POID}">✕</button>` : ''}
+          </div>
         </div>
-        <div style="font-size:13px">${productName} · <strong>${qty} kg</strong></div>
+        ${lineHtml}
+        ${canSeePrices() ? `<div style="font-size:13px;text-align:right;margin-top:6px"><strong>${fmtMoney(total)}</strong></div>` : ''}
         <div class="row-sub">${custName} · ${date}</div>
+        ${o.Note ? '<div class="row-sub">' + escapeHTML(o.Note) + '</div>' : ''}
+        <div class="print-actions"><button class="print-btn" data-print-order="${o.POID}">打印备货单</button></div>
         ${actions}
       </div>`;
     }).join('');
 
-    // 事件委托：订单按钮
+    container.querySelectorAll('[data-print-order]').forEach(btn => {
+      btn.addEventListener('click', () => printOrder(btn.dataset.printOrder));
+    });
     container.querySelectorAll('.order-btn').forEach(btn => {
       btn.addEventListener('click', function() {
-        const poID = this.dataset.po;
-        const status = this.dataset.status;
-        const productID = this.dataset.pid || '';
-        const qty = this.dataset.qty || '0';
-        changeOrderStatus(poID, status, productID, qty);
+        changeOrderStatus(this.dataset.po, this.dataset.status);
       });
     });
+  }
+
+  function renderOrderSummary(orders) {
+    const container = document.getElementById('order-summary');
+    if (!container) return;
+    if (!orders.length) {
+      container.innerHTML = '<div class="empty">暂无订单汇总</div>';
+      return;
+    }
+
+    const stats = orders.reduce((acc, o) => {
+      const lines = state.orderDetails.get(o.POID) || [];
+      const status = o.Status || 'pending';
+      const total = sumOrderTotal(o, lines);
+      acc.count += 1;
+      acc.byStatus[status] = (acc.byStatus[status] || 0) + total;
+      lines.forEach(d => {
+        const key = d.ProductID;
+        const qty = Number(d.QTY || 0);
+        const lineTotal = Number(d.LineTotal || qty * Number(d.UnitPrice || 0));
+        if (!acc.products[key]) acc.products[key] = { qty: 0, amount: 0, unit: getProdUnit(key) };
+        acc.products[key].qty += qty;
+        acc.products[key].amount += lineTotal;
+      });
+      const customer = o.CustomerID;
+      acc.customers[customer] = (acc.customers[customer] || 0) + total;
+      return acc;
+    }, { count: 0, byStatus: {}, products: {}, customers: {} });
+
+    const productRows = Object.entries(stats.products).map(([id, item]) =>
+      `<div class="summary-row"><span>${escapeHTML(getProdName(id))}</span><strong>${fmtNum(item.qty)} ${escapeHTML(item.unit)}${canSeePrices() ? ' · ' + fmtMoney(item.amount) : ''}</strong></div>`
+    ).join('');
+    const customerRows = canSeePrices() ? Object.entries(stats.customers).map(([id, amount]) =>
+      `<div class="summary-row"><span>${escapeHTML(getCustName(id))}</span><strong>${fmtMoney(amount)}</strong></div>`
+    ).join('') : '';
+
+    container.innerHTML = `<div class="summary-block">
+      <div class="mini-stat-grid">
+        <div class="mini-stat"><div class="stat-label">订单数量</div><div class="stat-value">${stats.count}</div></div>
+        <div class="mini-stat"><div class="stat-label">待处理</div><div class="stat-value">${canSeePrices() ? fmtMoney(stats.byStatus.pending || 0) : (orders.filter(o => (o.Status || 'pending') === 'pending').length + ' 单')}</div></div>
+        <div class="mini-stat"><div class="stat-label">备货/上车</div><div class="stat-value">${canSeePrices() ? fmtMoney((stats.byStatus.ready || 0) + (stats.byStatus.loaded || 0)) : (orders.filter(o => ['ready', 'loaded'].includes(o.Status)).length + ' 单')}</div></div>
+        <div class="mini-stat"><div class="stat-label">完成</div><div class="stat-value">${canSeePrices() ? fmtMoney(stats.byStatus.done || 0) : (orders.filter(o => o.Status === 'done').length + ' 单')}</div></div>
+        <div class="mini-stat"><div class="stat-label">取消</div><div class="stat-value">${canSeePrices() ? fmtMoney(stats.byStatus.cancelled || 0) : (orders.filter(o => o.Status === 'cancelled').length + ' 单')}</div></div>
+      </div>
+      <div class="card">
+        <div class="row-title">产品汇总</div>
+        <div class="summary-list">${productRows || '<div class="empty small">没有产品明细</div>'}</div>
+      </div>
+      ${canSeePrices() ? `<div class="card">
+        <div class="row-title">客户汇总</div>
+        <div class="summary-list">${customerRows || '<div class="empty small">没有客户汇总</div>'}</div>
+      </div>` : ''}
+    </div>`;
+  }
+
+  function openPrintWindow(title, bodyHtml) {
+    const win = window.open('', '_blank');
+    if (!win) {
+      showToast('浏览器阻止了打印窗口，请允许弹窗', 'err');
+      return;
+    }
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title>
+      <style>
+        body{font-family:Arial,sans-serif;color:#111;margin:24px;font-size:14px}
+        h1{font-size:20px;margin:0 0 12px}
+        .meta{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin:16px 0}
+        table{width:100%;border-collapse:collapse;margin:16px 0}
+        th,td{border:1px solid #ddd;padding:8px;text-align:left}
+        th{background:#f5f5f5}
+        .sign{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:48px}
+        .line{border-top:1px solid #333;padding-top:8px}
+        @media print{button{display:none}}
+      </style></head><body>${bodyHtml}<button onclick="window.print()">打印</button></body></html>`);
+    win.document.close();
+    win.focus();
+  }
+
+  function printStockIn(stockInID) {
+    const s = state.stockIns.find(x => x.StockInID === stockInID);
+    if (!s) return;
+    const d = state.stockInDetails.get(stockInID);
+    const product = d ? getProd(d.ProductID) : null;
+    openPrintWindow('进货证明 ' + stockInID, `
+      <h1>YCPos 进货证明</h1>
+      <div class="meta">
+        <strong>进货单号</strong><span>${escapeHTML(stockInID)}</span>
+        <strong>日期时间</strong><span>${escapeHTML(getDateText(s.Date))} ${escapeHTML(s.Time || '')}</span>
+        <strong>供应商</strong><span>${escapeHTML(getSupName(s.SupplierID))}</span>
+        <strong>经手人</strong><span>${escapeHTML(s.CreatedBy || '')}</span>
+        <strong>备注</strong><span>${escapeHTML(s.Note || '')}</span>
+      </div>
+      <table><thead><tr><th>产品</th><th>等级</th><th>数量</th><th>单位</th></tr></thead><tbody>
+        <tr>
+          <td>${escapeHTML(product ? product.ProductName : '-')}</td>
+          <td>${escapeHTML(product ? (product.Grade || '-') : '-')}</td>
+          <td>${escapeHTML(d ? fmtNum(d.Qty) : '-')}</td>
+          <td>${escapeHTML(d ? getProdUnit(d.ProductID) : '-')}</td>
+        </tr>
+      </tbody></table>
+      <div class="sign"><div class="line">供应商确认</div><div class="line">公司确认</div></div>
+    `);
+  }
+
+  function printOrder(poID) {
+    const o = state.orders.find(x => x.POID === poID);
+    if (!o) return;
+    const lines = state.orderDetails.get(poID) || [];
+    const rows = lines.map(d => {
+      const product = getProd(d.ProductID);
+      return `<tr>
+        <td>${escapeHTML(product ? product.ProductName : getProdName(d.ProductID))}</td>
+        <td>${escapeHTML(product ? (product.Grade || '-') : '-')}</td>
+        <td>${escapeHTML(fmtNum(d.QTY))}</td>
+        <td>${escapeHTML(getProdUnit(d.ProductID))}</td>
+      </tr>`;
+    }).join('');
+    openPrintWindow('备货单 ' + poID, `
+      <h1>YCPos 备货单</h1>
+      <div class="meta">
+        <strong>订单号</strong><span>${escapeHTML(poID)}</span>
+        <strong>日期</strong><span>${escapeHTML(getDateText(o.Date))}</span>
+        <strong>客户</strong><span>${escapeHTML(getCustName(o.CustomerID))}</span>
+        <strong>状态</strong><span>${escapeHTML(STATUS_LABELS[o.Status || 'pending'] || o.Status || '')}</span>
+        <strong>备注</strong><span>${escapeHTML(o.Note || '')}</span>
+      </div>
+      <table><thead><tr><th>产品</th><th>等级</th><th>数量</th><th>单位</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sign"><div class="line">备货确认</div><div class="line">上车确认</div></div>
+    `);
   }
 
   function renderCustomers() {
     const q = (document.getElementById('customer-search').value || '').toLowerCase();
     const list = Array.from(state.customers.values())
       .filter(c => (c.CustomerName || '').toLowerCase().includes(q));
-
     const container = document.getElementById('customer-list');
     if (list.length === 0) {
       container.innerHTML = '<div class="empty">暂无客户</div>';
       return;
     }
-
     container.innerHTML = list.map(c => {
       let sub = c.CustomerID;
       if (c.Phone) sub += ' · 📞 ' + escapeHTML(c.Phone);
@@ -420,10 +1033,18 @@
           <div class="row-title">${escapeHTML(c.CustomerName)}</div>
           <div class="row-sub">${sub}</div>
         </div>
-        <span style="font-size:22px">👤</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:22px">👤</span>
+          ${isAdmin() ? `<button class="del-btn" data-type="customer" data-id="${c.CustomerID}">✕</button>` : ''}
+        </div>
       </div>`;
     }).join('');
+    attachDeleteHandlers(container);
   }
+
+  const debouncedRenderProducts = debounce(renderProducts, 250);
+  const debouncedRenderSuppliers = debounce(renderSuppliers, 250);
+  const debouncedRenderCustomers = debounce(renderCustomers, 250);
 
   // ============================================================
   // 页面切换
@@ -435,6 +1056,10 @@
     if (btn) btn.classList.add('active');
     state.currentPage = page;
     renderCurrentPage();
+
+    // 根据页面控制 FAB
+    const fab = document.getElementById('fab');
+    fab.style.display = canShowFab(page) ? 'flex' : 'none';
   }
 
   // ============================================================
@@ -445,152 +1070,402 @@
     stockin:    'modal-si',
     products:   'modal-prod',
     orders:     'modal-order',
+    processing: 'modal-processing',
+    suppliers:  'modal-supplier',
     customers:  'modal-customer'
   };
 
   function openModal() {
     const modalId = PAGE_MODAL_MAP[state.currentPage];
     if (!modalId) return;
+    // 权限检查
+    if (!canUseModal(modalId)) {
+      showToast('你没有权限执行此操作', 'err');
+      return;
+    }
     state.currentModal = modalId;
     document.getElementById(modalId).classList.add('open');
+    // 打开 modal 后更新一次单位标签
+    updateQtyLabels();
+    if (modalId === 'modal-processing') {
+      selectSuggestedProcessingTarget();
+      updateProcessingPreview();
+    }
+    if (modalId === 'modal-order') renderOrderDraft();
   }
 
   function closeModal() {
     if (state.currentModal) {
+      if (state.currentModal === 'modal-order') {
+        state.orderDraft = [];
+        document.getElementById('o-qty').value = '';
+        document.getElementById('o-price').value = '';
+        document.getElementById('o-note').value = '';
+        renderOrderDraft();
+      }
       document.getElementById(state.currentModal).classList.remove('open');
       state.currentModal = null;
     }
   }
 
   // ============================================================
-  // 表单提交操作
+  // 表单提交
   // ============================================================
   async function submitStockIn() {
+    if (!canUseModal('modal-si')) { showToast('无权操作', 'err'); return; }
     const qty = parseInt(document.getElementById('f-qty').value);
     if (!qty || qty < 1) { showToast('请输入正确数量', 'err'); return; }
-
     const btn = document.getElementById('btn-si');
     btn.disabled = true;
     btn.textContent = '提交中...';
     try {
-      const res = await api({
-        action: 'addStockIn',
-        supplierID: document.getElementById('f-sup').value,
-        productID: document.getElementById('f-prod').value,
-        qty,
-        createdBy: 'duzenfruit@gmail.com'
+      const supplierID = document.getElementById('f-sup').value;
+      const productID = document.getElementById('f-prod').value;
+      await sbRpc('create_stock_in', {
+        p_supplier_id: supplierID,
+        p_product_id: productID,
+        p_qty: qty,
+        p_note: document.getElementById('f-note').value.trim()
       });
-      if (res.error) throw new Error(res.error);
+
       showToast('进货成功！', 'ok');
       document.getElementById('f-qty').value = '';
+      document.getElementById('f-note').value = '';
       closeModal();
-      await loadAll(false);
+      await loadAll();
     } catch (e) {
-      showToast('提交失败: ' + e.message, 'err');
+      showToast('提交失败: ' + getErrorMessage(e), 'err');
     }
     btn.disabled = false;
     btn.textContent = '确认进货';
   }
 
+  function updateProcessingPreview() {
+    const input = Number(document.getElementById('pr-input').value || 0);
+    const other = Number(document.getElementById('pr-other-loss').value || 0);
+    const output = Math.max(input - other, 0);
+    const unit = getProdUnit(document.getElementById('pr-source').value);
+    const rate = input ? (other / input * 100) : 0;
+    const source = getProd(document.getElementById('pr-source').value);
+    const mapped = getMappedSalesGrade(source);
+    const hint = mapped ? '建议出货等级：' + mapped + '。' : '';
+    document.getElementById('processing-preview').textContent =
+      hint + '可售产出 ' + fmtNum(output) + ' ' + unit + '，损耗率 ' + rate.toFixed(1) + '%';
+  }
+
+  function selectSuggestedProcessingTarget() {
+    const sourceEl = document.getElementById('pr-source');
+    const targetEl = document.getElementById('pr-target');
+    if (!sourceEl || !targetEl) return;
+    const source = getProd(sourceEl.value);
+    const mappedGrade = getMappedSalesGrade(source);
+    if (!source || !mappedGrade) return;
+    const match = Array.from(state.products.values()).find(p =>
+      p.ProductID !== source.ProductID &&
+      normalizeFruitName(p.ProductName) === normalizeFruitName(source.ProductName) &&
+      String(p.Grade || '').toUpperCase() === String(mappedGrade).toUpperCase()
+    );
+    if (match) targetEl.value = match.ProductID;
+  }
+
+  async function submitProcessing() {
+    if (!canUseModal('modal-processing')) { showToast('无权操作', 'err'); return; }
+    const sourceID = document.getElementById('pr-source').value;
+    const targetID = document.getElementById('pr-target').value;
+    const input = Number(document.getElementById('pr-input').value || 0);
+    const stem = 0;
+    const other = Number(document.getElementById('pr-other-loss').value || 0);
+    const output = input - other;
+    const source = getProd(sourceID);
+    const target = getProd(targetID);
+
+    if (!sourceID || !targetID || !source || !target) { showToast('请选择原料和可售产品', 'err'); return; }
+    if (!input || input <= 0) { showToast('请输入正确加工数量', 'err'); return; }
+    if (other < 0 || output <= 0) { showToast('损耗不能大过加工数量', 'err'); return; }
+    if (Number(source.StockBalance || 0) < input) { showToast('原料库存不足', 'err'); return; }
+
+    const btn = document.getElementById('btn-processing');
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+    try {
+      await sbRpc('process_fruit_loss', {
+        p_source_product_id: sourceID,
+        p_target_product_id: targetID,
+        p_input_qty: input,
+        p_stem_loss: stem,
+        p_other_loss: other
+      });
+
+      showToast('加工记录已保存', 'ok');
+      ['pr-input', 'pr-other-loss'].forEach(id => document.getElementById(id).value = '');
+      closeModal();
+      await loadAll();
+    } catch (e) {
+      showToast('提交失败: ' + getErrorMessage(e), 'err');
+    }
+    btn.disabled = false;
+    btn.textContent = '确认加工';
+  }
+
   async function submitProduct() {
+    if (!canUseModal('modal-prod')) { showToast('无权操作', 'err'); return; }
     const name = document.getElementById('np-name').value.trim();
     if (!name) { showToast('请输入产品名称', 'err'); return; }
-
     const btn = document.getElementById('btn-prod');
     btn.disabled = true;
     btn.textContent = '添加中...';
     try {
-      const res = await api({
-        action: 'addProduct',
-        name,
-        grade: document.getElementById('np-grade').value,
-        unit: document.getElementById('np-unit').value
+      await sbRpc('create_product', {
+        p_product_name: name,
+        p_grade: document.getElementById('np-grade').value,
+        p_unit: document.getElementById('np-unit').value,
+        p_note: document.getElementById('np-note').value.trim()
       });
-      if (res.error) throw new Error(res.error);
       showToast('产品已添加！', 'ok');
       document.getElementById('np-name').value = '';
+      document.getElementById('np-grade').value = '';
+      document.getElementById('np-note').value = '';
       closeModal();
-      await loadAll(false);
+      await loadAll();
     } catch (e) {
-      showToast('提交失败: ' + e.message, 'err');
+      showToast('提交失败: ' + getErrorMessage(e), 'err');
     }
     btn.disabled = false;
     btn.textContent = '添加产品';
   }
 
   async function submitCustomer() {
+    if (!canUseModal('modal-customer')) { showToast('无权操作', 'err'); return; }
     const name = document.getElementById('nc-name').value.trim();
     if (!name) { showToast('请输入客户名称', 'err'); return; }
-
     const btn = document.getElementById('btn-customer');
     btn.disabled = true;
     btn.textContent = '添加中...';
     try {
-      const res = await api({
-        action: 'addCustomer',
-        name,
-        phone: document.getElementById('nc-phone').value.trim(),
-        note: document.getElementById('nc-note').value.trim()
+      await sbRpc('create_customer', {
+        p_customer_name: name,
+        p_phone: document.getElementById('nc-phone').value.trim(),
+        p_note: document.getElementById('nc-note').value.trim()
       });
-      if (res.error) throw new Error(res.error);
       showToast('客户已添加！', 'ok');
       document.getElementById('nc-name').value = '';
       document.getElementById('nc-phone').value = '';
       document.getElementById('nc-note').value = '';
       closeModal();
-      await loadAll(false);
+      await loadAll();
     } catch (e) {
-      showToast('提交失败: ' + e.message, 'err');
+      showToast('提交失败: ' + getErrorMessage(e), 'err');
     }
     btn.disabled = false;
     btn.textContent = '添加客户';
   }
 
-  async function submitOrder() {
-    const qty = parseInt(document.getElementById('o-qty').value);
-    if (!qty || qty < 1) { showToast('请输入正确数量', 'err'); return; }
+  async function submitSupplier() {
+    if (!canUseModal('modal-supplier')) { showToast('无权操作', 'err'); return; }
+    const name = document.getElementById('ns-name').value.trim();
+    if (!name) { showToast('请输入供应商名称', 'err'); return; }
+    const btn = document.getElementById('btn-supplier');
+    btn.disabled = true;
+    btn.textContent = '添加中...';
+    try {
+      await sbRpc('create_supplier', {
+        p_supplier_name: name,
+        p_phone: document.getElementById('ns-phone').value.trim(),
+        p_note: document.getElementById('ns-note').value.trim()
+      });
+      showToast('供应商已添加！', 'ok');
+      document.getElementById('ns-name').value = '';
+      document.getElementById('ns-phone').value = '';
+      document.getElementById('ns-note').value = '';
+      closeModal();
+      await loadAll();
+    } catch (e) {
+      showToast('提交失败: ' + getErrorMessage(e), 'err');
+    }
+    btn.disabled = false;
+    btn.textContent = '添加供应商';
+  }
 
+  function renderOrderDraft() {
+    const list = document.getElementById('order-draft-list');
+    const totalEl = document.getElementById('order-total');
+    if (!list || !totalEl) return;
+
+    const total = state.orderDraft.reduce((sum, line) => sum + line.qty * line.unitPrice, 0);
+    totalEl.textContent = '总额 ' + fmtMoney(total);
+
+    if (!state.orderDraft.length) {
+      list.innerHTML = '<div class="empty small">还没有产品</div>';
+      return;
+    }
+
+    list.innerHTML = state.orderDraft.map((line, index) => {
+      const product = getProd(line.productID);
+      return `<div class="order-draft-row">
+        <div>
+          <div class="order-draft-title">${escapeHTML(formatProductLabel(product))}</div>
+          <div class="order-draft-sub">${fmtNum(line.qty)} ${escapeHTML(getProdUnit(line.productID))} x ${fmtMoney(line.unitPrice)} = ${fmtMoney(line.qty * line.unitPrice)}</div>
+        </div>
+        <button class="order-remove" data-index="${index}" type="button">×</button>
+      </div>`;
+    }).join('');
+
+    list.querySelectorAll('.order-remove').forEach(btn => {
+      btn.addEventListener('click', function() {
+        state.orderDraft.splice(Number(this.dataset.index), 1);
+        renderOrderDraft();
+      });
+    });
+  }
+
+  function addOrderLine() {
+    const productID = document.getElementById('o-prod').value;
+    const qty = Number(document.getElementById('o-qty').value || 0);
+    const unitPrice = Number(document.getElementById('o-price').value || 0);
+    if (!productID) { showToast('请选择产品', 'err'); return; }
+    if (!qty || qty <= 0) { showToast('请输入正确数量', 'err'); return; }
+    if (unitPrice < 0) { showToast('请输入正确单价', 'err'); return; }
+
+    const existing = state.orderDraft.find(line => line.productID === productID && line.unitPrice === unitPrice);
+    if (existing) existing.qty += qty;
+    else state.orderDraft.push({ productID, qty, unitPrice });
+
+    document.getElementById('o-qty').value = '';
+    document.getElementById('o-price').value = '';
+    renderOrderDraft();
+  }
+
+  async function submitOrder() {
+    if (!canUseModal('modal-order')) { showToast('无权操作', 'err'); return; }
+    if (!state.orderDraft.length) { showToast('请先加入产品', 'err'); return; }
     const btn = document.getElementById('btn-order');
     btn.disabled = true;
     btn.textContent = '创建中...';
     try {
-      const res = await api({
-        action: 'addOrder',
-        customerID: document.getElementById('o-cust').value,
-        productID: document.getElementById('o-prod').value,
-        qty
+      const customerID = document.getElementById('o-cust').value;
+      await sbRpc('create_sales_order', {
+        p_customer_id: customerID,
+        p_note: document.getElementById('o-note').value.trim(),
+        p_items: state.orderDraft.map(line => ({
+          product_id: line.productID,
+          qty: line.qty,
+          unit_price: line.unitPrice
+        }))
       });
-      if (res.error) throw new Error(res.error);
+
       showToast('订单已创建！', 'ok');
+      state.orderDraft = [];
       document.getElementById('o-qty').value = '';
+      document.getElementById('o-price').value = '';
+      document.getElementById('o-note').value = '';
+      renderOrderDraft();
       closeModal();
-      await loadAll(false);
+      await loadAll();
     } catch (e) {
-      showToast('提交失败: ' + e.message, 'err');
+      showToast('提交失败: ' + getErrorMessage(e), 'err');
     }
     btn.disabled = false;
     btn.textContent = '创建订单';
   }
 
-  async function changeOrderStatus(poID, status, productID, qty) {
-    try {
-      const res = await api({ action: 'updateOrder', poID, status, productID, qty });
-      if (res.error) throw new Error(res.error);
-      showToast(
-        status === 'done' ? '订单已完成 ✓' : '订单已取消',
-        status === 'done' ? 'ok' : 'err'
-      );
-      await loadAll(false);
-    } catch (e) {
-      showToast('操作失败', 'err');
+  async function changeOrderStatus(poID, status) {
+    const allowed = (status === 'ready' || status === 'loaded') ? canPrepareOrder()
+      : status === 'done' ? canCompleteOrder()
+      : status === 'cancelled' ? canCancelOrder()
+      : false;
+    if (!allowed) {
+      showToast('无权操作', 'err');
+      return;
     }
+    try {
+      await sbRpc('change_sales_order_status', {
+        p_po_id: poID,
+        p_status: status
+      });
+      showToast(STATUS_LABELS[status] ? '订单已更新为' + STATUS_LABELS[status] : '订单已更新', status === 'cancelled' ? 'err' : 'ok');
+      await loadAll();
+    } catch (e) {
+      showToast('操作失败: ' + getErrorMessage(e), 'err');
+    }
+  }
+
+  // ============================================================
+  // 删除功能（仅 admin）
+  // ============================================================
+  function attachDeleteHandlers(container) {
+    container.querySelectorAll('.del-btn').forEach(btn => {
+      btn.addEventListener('click', async function() {
+        if (!isAdmin()) { showToast('无权操作', 'err'); return; }
+        showToast('正式版暂不允许直接删除，请用取消/作废流程保留审计记录', 'err');
+      });
+    });
+  }
+
+  // ============================================================
+  // 新增用户（仅 admin）
+  // ============================================================
+  async function submitAddUser() {
+    showToast('正式版员工账号请在 Supabase Auth 创建，再写入 staff_profiles', 'err');
+  }
+
+  // ============================================================
+  // 修改密码（所有人可用）
+  // ============================================================
+  async function submitChangePassword() {
+    const oldPw = document.getElementById('cp-old').value.trim();
+    const newPw = document.getElementById('cp-new').value.trim();
+    const confirmPw = document.getElementById('cp-confirm').value.trim();
+    if (!oldPw || !newPw || !confirmPw) { showToast('请填写所有字段', 'err'); return; }
+    if (newPw !== confirmPw) { showToast('两次新密码不一致', 'err'); return; }
+    const btn = document.getElementById('btn-changepw');
+    btn.disabled = true;
+    btn.textContent = '修改中...';
+    try {
+      const verify = await fetch(AUTH + '/token?grant_type=password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
+        body: JSON.stringify({ email: currentUser.Username, password: oldPw })
+      });
+      if (!verify.ok) { showToast('当前密码错误', 'err'); btn.disabled = false; btn.textContent = '修改密码'; return; }
+      const res = await fetch(AUTH + '/user', {
+        method: 'PUT',
+        headers: sbHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ password: newPw })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showToast('密码修改成功！', 'ok');
+      document.getElementById('cp-old').value = '';
+      document.getElementById('cp-new').value = '';
+      document.getElementById('cp-confirm').value = '';
+      closeModal();
+    } catch (e) {
+      showToast('修改失败: ' + getErrorMessage(e), 'err');
+    }
+    btn.disabled = false;
+    btn.textContent = '修改密码';
   }
 
   // ============================================================
   // 初始化
   // ============================================================
   function init() {
-    // 导航按钮事件（使用事件委托）
+    // 处理登录/登出
+    document.getElementById('login-btn').addEventListener('click', doLogin);
+    document.getElementById('login-pass').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('user-display').addEventListener('click', doLogout);
+
+    // 添加用户 / 修改密码按钮
+    document.getElementById('btn-add-user').addEventListener('click', function() {
+      showToast('正式版请在 Supabase Auth 建员工账号', 'err');
+    });
+    document.getElementById('btn-change-pw').addEventListener('click', function() {
+      state.currentModal = 'modal-changepw';
+      document.getElementById('modal-changepw').classList.add('open');
+    });
+
+    // 导航
     document.querySelector('.nav').addEventListener('click', function(e) {
       const btn = e.target.closest('.nav-btn');
       if (!btn) return;
@@ -599,44 +1474,92 @@
       if (page) switchPage(page, btn);
     });
 
-    // 搜索防抖
+    // 搜索
     document.getElementById('product-search').addEventListener('input', debouncedRenderProducts);
+    document.getElementById('supplier-search').addEventListener('input', debouncedRenderSuppliers);
     document.getElementById('customer-search').addEventListener('input', debouncedRenderCustomers);
-
-    // FAB 按钮
-    document.getElementById('fab').addEventListener('click', openModal);
-
-    // 刷新按钮
-    document.getElementById('sync-btn').addEventListener('click', () => loadAll(false));
-
-    // Modal 背景点击关闭
-    document.querySelectorAll('.modal-bg').forEach(m => {
-      m.addEventListener('click', function(e) {
-        if (e.target === this) closeModal();
-      });
+    document.getElementById('stockin-date-from').addEventListener('change', function() {
+      state.stockInFilter.from = this.value;
+      renderStockIn();
+    });
+    document.getElementById('stockin-date-to').addEventListener('change', function() {
+      state.stockInFilter.to = this.value;
+      renderStockIn();
+    });
+    document.getElementById('btn-stockin-clear').addEventListener('click', function() {
+      state.stockInFilter = { from: '', to: '' };
+      document.getElementById('stockin-date-from').value = '';
+      document.getElementById('stockin-date-to').value = '';
+      renderStockIn();
+    });
+    document.getElementById('order-date-from').addEventListener('change', function() {
+      state.orderFilter.from = this.value;
+      renderOrders();
+    });
+    document.getElementById('order-date-to').addEventListener('change', function() {
+      state.orderFilter.to = this.value;
+      renderOrders();
+    });
+    document.getElementById('btn-order-clear').addEventListener('click', function() {
+      state.orderFilter = { from: '', to: '' };
+      document.getElementById('order-date-from').value = '';
+      document.getElementById('order-date-to').value = '';
+      renderOrders();
     });
 
-    // Modal 提交按钮
+    // 产品选择 change 事件 → 更新数量单位标签
+    document.getElementById('f-prod').addEventListener('change', updateQtyLabels);
+    document.getElementById('o-prod').addEventListener('change', updateQtyLabels);
+    document.getElementById('pr-source').addEventListener('change', function() {
+      selectSuggestedProcessingTarget();
+      updateProcessingPreview();
+    });
+    document.getElementById('pr-target').addEventListener('change', updateProcessingPreview);
+    ['pr-input', 'pr-other-loss'].forEach(id => {
+      document.getElementById(id).addEventListener('input', updateProcessingPreview);
+    });
+
+    // 按钮
+    document.getElementById('fab').addEventListener('click', openModal);
+    document.getElementById('sync-btn').addEventListener('click', () => loadAll());
+
+    // 正式录单时不允许点背景关闭，避免误触导致资料丢失。
+
+    // 表单提交
     document.getElementById('btn-si').addEventListener('click', submitStockIn);
     document.getElementById('btn-prod').addEventListener('click', submitProduct);
     document.getElementById('btn-customer').addEventListener('click', submitCustomer);
+    document.getElementById('btn-supplier').addEventListener('click', submitSupplier);
+    document.getElementById('btn-order-add-line').addEventListener('click', addOrderLine);
     document.getElementById('btn-order').addEventListener('click', submitOrder);
+    document.getElementById('btn-processing').addEventListener('click', submitProcessing);
+    document.getElementById('btn-adduser').addEventListener('click', submitAddUser);
+    document.getElementById('btn-changepw').addEventListener('click', submitChangePassword);
 
-    // Modal 取消按钮
+    // 取消按钮关闭
     document.querySelectorAll('.btn-cancel').forEach(btn => {
       btn.addEventListener('click', closeModal);
     });
 
-    // Service Worker 注册
+    // Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 
-    // 启动加载
-    loadAll(true);
+    // 检查登录状态
+    if (currentUser) {
+      // 已登录，直接加载
+      document.getElementById('page-login').classList.remove('active');
+      document.getElementById('app-main').style.display = 'flex';
+      applyPermissions();
+      loadAll();
+    } else {
+      // 未登录，显示登录页
+      document.getElementById('page-login').classList.add('active');
+      document.getElementById('app-main').style.display = 'none';
+    }
   }
 
-  // DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
