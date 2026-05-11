@@ -251,6 +251,25 @@ function applyPermissions() {
     try { return JSON.parse(text); } catch { return text; }
   }
 
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function createStaffProfileWithRetry(profile) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        return await sbRpc('create_staff_profile', profile);
+      } catch (e) {
+        lastError = e;
+        const msg = getErrorMessage(e);
+        if (!msg.includes('Auth user not found')) throw e;
+        await sleep(700 + attempt * 500);
+      }
+    }
+    throw lastError || new Error('Auth user not found');
+  }
+
   async function loadOrdersForCurrentRole() {
     try {
       const bundle = await sbRpc('get_orders_app', {});
@@ -293,7 +312,14 @@ function applyPermissions() {
         },
         body: JSON.stringify({ email, password })
       });
-      if (!loginRes.ok) throw new Error('Email 或密码错误');
+      if (!loginRes.ok) {
+        const loginText = await loginRes.text();
+        const loginMsg = getErrorMessage(new Error(loginText));
+        if (loginMsg.includes('Email not confirmed')) {
+          throw new Error('Email 还未确认。请在 Supabase Auth 关闭 Confirm email，或先确认这个邮箱。');
+        }
+        throw new Error(loginMsg || 'Email 或密码错误');
+      }
       const session = await loginRes.json();
       authToken = session.access_token;
       localStorage.setItem('ycpos_auth_token', authToken);
@@ -1466,14 +1492,14 @@ function applyPermissions() {
         }
       }
 
-      await sbRpc('create_staff_profile', {
+      await createStaffProfileWithRetry({
         p_email: email,
         p_display_name: displayName,
         p_role: role,
         p_active: true
       });
 
-      showToast('用户已创建，可以用 Email 登录', 'ok');
+      showToast('用户已创建。如无法登录，请检查邮箱确认设置。', 'ok');
       document.getElementById('au-user').value = '';
       document.getElementById('au-display').value = '';
       document.getElementById('au-pass').value = '';
