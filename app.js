@@ -948,15 +948,17 @@ function applyPermissions() {
     }
     win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title>
       <style>
-        body{font-family:Arial,sans-serif;color:#111;margin:24px;font-size:14px}
-        h1{font-size:20px;margin:0 0 12px}
-        .meta{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin:16px 0}
-        table{width:100%;border-collapse:collapse;margin:16px 0}
-        th,td{border:1px solid #ddd;padding:8px;text-align:left}
+        @page{size:A4 portrait;margin:8mm}
+        body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:10px;line-height:1.25;width:95mm;max-width:95mm}
+        h1{font-size:14px;margin:0 0 6px}
+        .meta{display:grid;grid-template-columns:26mm 1fr;gap:3px 6px;margin:8px 0}
+        table{width:100%;border-collapse:collapse;margin:8px 0}
+        th,td{border:1px solid #ddd;padding:4px;text-align:left}
         th{background:#f5f5f5}
-        .sign{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:48px}
-        .line{border-top:1px solid #333;padding-top:8px}
-        @media print{button{display:none}}
+        .sign{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+        .line{border-top:1px solid #333;padding-top:5px}
+        button{margin-top:10px;padding:6px 10px}
+        @media print{button{display:none}body{width:95mm;max-width:95mm}}
       </style></head><body>${bodyHtml}<button onclick="window.print()">打印</button></body></html>`);
     win.document.close();
     win.focus();
