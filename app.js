@@ -1428,7 +1428,71 @@ function applyPermissions() {
   // 新增用户（仅 admin）
   // ============================================================
   async function submitAddUser() {
-    showToast('正式版员工账号请在 Supabase Auth 创建，再写入 staff_profiles', 'err');
+    if (!isAdmin()) { showToast('无权操作', 'err'); return; }
+    const email = document.getElementById('au-user').value.trim();
+    const displayName = document.getElementById('au-display').value.trim();
+    const password = document.getElementById('au-pass').value.trim();
+    const role = document.getElementById('au-role').value;
+    if (!email || !displayName || !password || !role) {
+      showToast('请填写所有员工资料', 'err');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showToast('请输入正确的 Email', 'err');
+      return;
+    }
+    if (password.length < 6) {
+      showToast('密码至少需要 6 位', 'err');
+      return;
+    }
+
+    const btn = document.getElementById('btn-adduser');
+    btn.disabled = true;
+    btn.textContent = '添加中...';
+    try {
+      const signupRes = await fetch(AUTH + '/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY
+        },
+        body: JSON.stringify({ email, password })
+      });
+      if (!signupRes.ok) {
+        const signupText = await signupRes.text();
+        if (!signupText.includes('already registered') && !signupText.includes('already exists')) {
+          throw new Error(signupText);
+        }
+      }
+
+      await sbRpc('create_staff_profile', {
+        p_email: email,
+        p_display_name: displayName,
+        p_role: role,
+        p_active: true
+      });
+
+      showToast('用户已创建，可以用 Email 登录', 'ok');
+      document.getElementById('au-user').value = '';
+      document.getElementById('au-display').value = '';
+      document.getElementById('au-pass').value = '';
+      document.getElementById('au-role').value = 'sales';
+      closeModal();
+    } catch (e) {
+      const msg = getErrorMessage(e);
+      if (msg.includes('row-level security') || msg.includes('permission denied')) {
+        showToast('创建失败：请先执行员工创建 SQL', 'err');
+      } else if (msg.includes('User already registered') || msg.includes('already registered')) {
+        showToast('这个 Email 已经注册过', 'err');
+      } else if (msg.includes('Auth user not found')) {
+        showToast('Auth 账号未创建，请检查 Supabase 是否允许注册', 'err');
+      } else {
+        showToast('创建失败: ' + msg, 'err');
+      }
+    }
+    btn.disabled = false;
+    btn.textContent = '添加用户';
   }
 
   // ============================================================
@@ -1481,7 +1545,9 @@ function applyPermissions() {
 
     // 添加用户 / 修改密码按钮
     document.getElementById('btn-add-user').addEventListener('click', function() {
-      showToast('正式版请在 Supabase Auth 建员工账号', 'err');
+      if (!isAdmin()) { showToast('无权操作', 'err'); return; }
+      state.currentModal = 'modal-adduser';
+      document.getElementById('modal-adduser').classList.add('open');
     });
     document.getElementById('btn-change-pw').addEventListener('click', function() {
       state.currentModal = 'modal-changepw';

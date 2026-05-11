@@ -16,9 +16,9 @@
 
 ## 2. 建立员工账号
 
-在 Supabase Dashboard 的 Authentication 里新增员工 Email/password。
+第一次管理员账号仍然需要在 Supabase Dashboard 的 Authentication 里新增 Email/password。
 
-然后把员工写入 `staff_profiles`：
+然后把第一个管理员写入 `staff_profiles`：
 
 ```sql
 INSERT INTO staff_profiles (id, "DisplayName", "Role", "Active")
@@ -32,6 +32,9 @@ WHERE email = 'admin@example.com';
 - `admin`
 - `sales`
 - `purchase`
+- `warehouse`
+
+之后新增员工可以直接在 YCPos app 右上角点击 `👤+` 创建。创建前请确认已执行 `supabase_staff_profiles_admin_policy.sql`，或已使用包含该员工创建函数的最新版 `supabase_formal_v2.sql` / `supabase_formal_upgrade_v3.sql`。
 
 ## 3. 前端登录
 
