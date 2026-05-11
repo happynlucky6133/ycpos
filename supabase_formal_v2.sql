@@ -314,7 +314,7 @@ AS $$
 DECLARE
   v_product_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'sales', 'purchase']);
   IF NULLIF(trim(p_product_name), '') IS NULL THEN RAISE EXCEPTION 'Product name is required'; END IF;
 
   v_product_id := 'p' || substr(md5(now()::text || random()::text), 1, 6);
@@ -343,7 +343,7 @@ AS $$
 DECLARE
   v_supplier_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'purchase']);
   IF NULLIF(trim(p_supplier_name), '') IS NULL THEN RAISE EXCEPTION 'Supplier name is required'; END IF;
 
   v_supplier_id := 'S' || upper(substr(md5(now()::text || random()::text), 1, 6));
@@ -372,7 +372,7 @@ AS $$
 DECLARE
   v_customer_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'sales']);
   IF NULLIF(trim(p_customer_name), '') IS NULL THEN RAISE EXCEPTION 'Customer name is required'; END IF;
 
   v_customer_id := 'C' || upper(substr(md5(now()::text || random()::text), 1, 6));

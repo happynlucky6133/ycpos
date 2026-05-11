@@ -148,7 +148,7 @@ AS $$
 DECLARE
   v_product_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'sales', 'purchase']);
   IF NULLIF(trim(p_product_name), '') IS NULL THEN RAISE EXCEPTION 'Product name is required'; END IF;
 
   v_product_id := 'p' || substr(md5(now()::text || random()::text), 1, 6);

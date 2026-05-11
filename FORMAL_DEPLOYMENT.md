@@ -36,6 +36,8 @@ WHERE email = 'admin@example.com';
 
 之后新增员工可以直接在 YCPos app 右上角点击 `👤+` 创建。创建前请确认已执行 `supabase_staff_profiles_admin_policy.sql`，或已使用包含该员工创建函数的最新版 `supabase_formal_v2.sql` / `supabase_formal_upgrade_v3.sql`。
 
+如旧数据库已经上线，请再执行 `supabase_role_permissions_hotfix.sql`，让销售员可以新增产品/客户、采购员可以新增产品/供应商。
+
 如果希望员工创建后马上可以登录，请到 Supabase Dashboard：
 
 Authentication → Providers → Email → 关闭 `Confirm email`

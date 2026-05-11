@@ -100,7 +100,7 @@
     if (!currentUser) return true;
     const role = currentUser.Role;
     if (role === 'admin') return true;
-    if (role === 'sales') return !['stockin', 'processing', 'suppliers', 'customers', 'audit'].includes(page);
+    if (role === 'sales') return !['stockin', 'processing', 'suppliers', 'audit'].includes(page);
     if (role === 'purchase' || role === 'warehouse') return !['customers', 'audit'].includes(page);
     return true;
   }
@@ -112,18 +112,17 @@
     const fabPages = ['stockin', 'products', 'orders', 'processing', 'suppliers', 'customers'];
     if (!fabPages.includes(page)) return false;
     if (role === 'admin') return true;
-    if (role === 'sales') return page === 'orders';
-    if (role === 'purchase') return page === 'stockin' || page === 'processing';
+    if (role === 'sales') return ['products', 'customers', 'orders'].includes(page);
+    if (role === 'purchase') return ['products', 'suppliers', 'stockin', 'processing'].includes(page);
     return false;
   }
 
   function canUseModal(modalId) {
     if (!currentUser) return false;
     const role = currentUser.Role;
-    // 所有 modal 只能 admin 操作，除了进货（purchase）和订单（sales）
     if (role === 'admin') return true;
-    if (role === 'purchase') return modalId === 'modal-si' || modalId === 'modal-processing';
-    if (role === 'sales') return modalId === 'modal-order';
+    if (role === 'purchase') return ['modal-prod', 'modal-supplier', 'modal-si', 'modal-processing'].includes(modalId);
+    if (role === 'sales') return ['modal-prod', 'modal-customer', 'modal-order'].includes(modalId);
     return false;
   }
 
@@ -480,6 +479,11 @@ function applyPermissions() {
   function formatProductLabel(p) {
     if (!p) return '';
     return p.ProductName + (p.Grade ? ' ' + p.Grade : '') + ' · ' + Number(p.StockBalance || 0) + ' ' + (p.Unit || 'kg');
+  }
+
+  function formatProductNameGrade(p) {
+    if (!p) return '';
+    return p.ProductName + (p.Grade ? ' ' + p.Grade : '');
   }
 
   function normalizeFruitName(name) {
@@ -843,7 +847,7 @@ function applyPermissions() {
     const container = document.getElementById('processing-list');
     if (!container) return;
     if (!state.processingLogs.length) {
-      container.innerHTML = '<div class="empty">暂无加工记录。请先在 Supabase 执行 supabase_processing.sql，再用右下角 + 新增。</div>';
+      container.innerHTML = '<div class="empty">暂无加工记录</div>';
       return;
     }
     container.innerHTML = [...state.processingLogs].reverse().map(log => {
@@ -858,7 +862,7 @@ function applyPermissions() {
           <span class="mono">${escapeHTML(log.ProcessID)}</span>
           <span style="font-size:11px;color:var(--text2)">${String(log.Date || '').slice(0,10)}</span>
         </div>
-        <div style="font-size:13px">${escapeHTML(formatProductLabel(source))} → <strong>${escapeHTML(formatProductLabel(target))}</strong></div>
+        <div style="font-size:13px">${escapeHTML(formatProductNameGrade(source))} → <strong>${escapeHTML(formatProductNameGrade(target))}</strong></div>
         <div class="row-sub">加工 ${fmtNum(input)} · 产出 ${fmtNum(log.OutputQty)} · 损耗 ${fmtNum(stem + other)} · 损耗率 ${lossRate.toFixed(1)}%</div>
       </div>`;
     }).join('');
