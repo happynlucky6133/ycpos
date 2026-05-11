@@ -997,20 +997,45 @@ function applyPermissions() {
       showToast('浏览器阻止了打印窗口，请允许弹窗', 'err');
       return;
     }
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title>
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title>
       <style>
-        @page{size:A4 portrait;margin:8mm}
-        body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:10px;line-height:1.25;width:95mm;max-width:95mm}
-        h1{font-size:14px;margin:0 0 6px}
-        .meta{display:grid;grid-template-columns:26mm 1fr;gap:3px 6px;margin:8px 0}
-        table{width:100%;border-collapse:collapse;margin:8px 0}
-        th,td{border:1px solid #ddd;padding:4px;text-align:left}
-        th{background:#f5f5f5}
-        .sign{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
-        .line{border-top:1px solid #333;padding-top:5px}
-        button{margin-top:10px;padding:6px 10px}
-        @media print{button{display:none}body{width:95mm;max-width:95mm}}
-      </style></head><body>${bodyHtml}<button onclick="window.print()">打印</button></body></html>`);
+        *{box-sizing:border-box}
+        html,body{margin:0;padding:0}
+        body{font-family:Arial,"Noto Sans SC",sans-serif;color:#111;background:#f3f3f3;font-size:11px;line-height:1.28}
+        .sheet{width:105mm;min-height:148.5mm;background:#fff;padding:6mm;overflow:hidden}
+        h1{font-size:16px;margin:0 0 5mm;font-weight:700}
+        .meta{display:grid;grid-template-columns:22mm 1fr;gap:2mm 4mm;margin:0 0 5mm}
+        .meta strong{font-weight:700}
+        .meta span{word-break:break-word}
+        table{width:100%;border-collapse:collapse;margin:0 0 8mm;table-layout:fixed}
+        th,td{border:1px solid #cfcfcf;padding:2.2mm 1.6mm;text-align:left;vertical-align:top;word-break:break-word}
+        th{background:#f3f3f3;font-weight:700}
+        th:nth-child(1),td:nth-child(1){width:38%}
+        th:nth-child(2),td:nth-child(2){width:20%}
+        th:nth-child(3),td:nth-child(3){width:22%}
+        th:nth-child(4),td:nth-child(4){width:20%}
+        .sign{display:grid;grid-template-columns:1fr 1fr;gap:10mm;margin-top:10mm}
+        .line{border-top:1px solid #333;padding-top:2mm;min-height:12mm}
+        .toolbar{position:sticky;bottom:0;padding:10px;background:rgba(243,243,243,.96);border-top:1px solid #ddd}
+        .toolbar button{width:100%;max-width:105mm;padding:12px 14px;border:1px solid #999;border-radius:6px;background:#fff;font-size:16px}
+        @media screen{
+          body{display:flex;flex-direction:column;align-items:flex-start}
+          .sheet{box-shadow:0 1px 8px rgba(0,0,0,.12);transform-origin:top left}
+        }
+        @media screen and (max-width:430px){
+          .sheet{width:100vw;min-height:141.4vw;padding:14px;font-size:11px}
+          h1{font-size:17px;margin-bottom:14px}
+          .meta{grid-template-columns:80px 1fr;gap:6px 10px;margin-bottom:14px}
+          th,td{padding:7px 5px}
+          .sign{gap:26px;margin-top:28px}
+        }
+        @media print{
+          @page{size:A4 portrait;margin:0}
+          body{background:#fff}
+          .toolbar{display:none}
+          .sheet{width:105mm;min-height:148.5mm;padding:6mm;box-shadow:none;page-break-after:always}
+        }
+      </style></head><body><main class="sheet">${bodyHtml}</main><div class="toolbar"><button onclick="window.print()">打印</button></div></body></html>`);
     win.document.close();
     win.focus();
   }
