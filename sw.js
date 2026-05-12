@@ -1,5 +1,5 @@
 /* ===== YCPos Service Worker v4 - 子路径兼容版 ===== */
-const CACHE = 'ycpos-v18';
+const CACHE = 'ycpos-v19';
 const STATIC_ASSETS = [
   '.',
   './index.html',
