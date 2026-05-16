@@ -129,7 +129,7 @@ BEGIN
     RAISE EXCEPTION '无效的访问链接';
   END IF;
 
-  v_token_hash := encode(digest(p_token, 'sha256'), 'hex');
+  v_token_hash := encode(extensions.digest(p_token, 'sha256'), 'hex');
 
   SELECT "CustomerID" INTO v_customer_id
   FROM customer_portal_tokens
