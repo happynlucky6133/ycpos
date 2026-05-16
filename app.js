@@ -25,6 +25,10 @@
     orderDraft: [],
     stockInFilter: { from: '', to: '' },
     orderFilter: { from: '', to: '' },
+    crFilter: { from: '', to: '', status: '' },
+    customerRequests: [],
+    customerRequestItems: [],
+    customerRequestsError: false,
     currentPage: 'dashboard',
     currentModal: null,
     loading:     false
@@ -267,6 +271,24 @@ function applyPermissions() {
     return { orders, orderDetails };
   }
 
+  async function loadCustomerRequests() {
+    try {
+      const bundle = await sbRpc('get_customer_requests_app', {});
+      if (bundle && Array.isArray(bundle.requests) && Array.isArray(bundle.items)) {
+        state.customerRequests = bundle.requests;
+        state.customerRequestItems = bundle.items;
+        state.customerRequestsError = false;
+        return;
+      }
+      throw new Error('Invalid response format');
+    } catch (e) {
+      console.warn('Customer requests RPC failed:', e.message);
+      state.customerRequests = [];
+      state.customerRequestItems = [];
+      state.customerRequestsError = true;
+    }
+  }
+
   // ============================================================
   // 登录 / 登出
   // ============================================================
@@ -360,7 +382,8 @@ function applyPermissions() {
         sbGetOptional('stock_ins', { order: 'id' }),
         sbGetOptional('stock_in_details', { order: 'id' }),
         sbGetOptional('processing_logs', { order: 'id' }),
-        loadOrdersForCurrentRole()
+        loadOrdersForCurrentRole(),
+        loadCustomerRequests()
       ]);
 
       const orders = orderBundle.orders || [];
@@ -616,6 +639,7 @@ function applyPermissions() {
     else if (page === 'processing') renderProcessing();
     else if (page === 'suppliers') renderSuppliers();
     else if (page === 'customers') renderCustomers();
+    else if (page === 'customer-requests') renderCustomerRequests();
     else if (page === 'audit')     loadAuditLogs();
   }
 
@@ -840,6 +864,11 @@ function applyPermissions() {
 
   const STATUS_LABELS = { pending: '待处理', ready: '已备货', loaded: '已上车', done: '完成', cancelled: '取消' };
   const STATUS_CHIPS = { pending: 'chip-p', ready: 'chip-p', loaded: 'chip-d', done: 'chip-d', cancelled: 'chip-c' };
+  const STATUS_LABELS_CR = {
+    submitted: '已提交', sales_review: 'Sales 审核中', warehouse_check: '仓库查货中',
+    waiting_customer: '等待客户回复', confirmed: '已确认', converted: '已转正式订单',
+    rejected: '已拒绝', cancelled: '已取消'
+  };
 
   function renderOrders() {
     const container = document.getElementById('orders-list');
@@ -905,6 +934,557 @@ function applyPermissions() {
       btn.addEventListener('click', function() {
         changeOrderStatus(this.dataset.po, this.dataset.status);
       });
+    });
+  }
+
+  function renderCustomerRequests() {
+    const container = document.getElementById('cr-requests-list');
+    if (!container) return;
+
+    const seePrice = canSeePrices();
+    const CR_STATUS_LABELS = {
+      submitted:         '已提交',
+      sales_review:      'Sales 审核中',
+      warehouse_check:   '仓库查货中',
+      waiting_customer:  '等待客户回复',
+      confirmed:         '已确认',
+      converted:         '已转正式订单',
+      rejected:          '已拒绝',
+      cancelled:         '已取消'
+    };
+    const CR_STATUS_CHIPS = {
+      submitted:         'chip-p',
+      sales_review:      'chip-p',
+      warehouse_check:   'chip-p',
+      waiting_customer:  'chip-d',
+      confirmed:         'chip-d',
+      converted:         'chip-d',
+      rejected:          'chip-c',
+      cancelled:         'chip-c'
+    };
+
+    if (state.customerRequestsError) {
+      container.innerHTML = '<div class="empty" style="color:var(--danger)">客户申请加载失败，请刷新或联系 Admin</div>';
+      return;
+    }
+
+    let requests = state.customerRequests || [];
+    // 日期筛选：基于 SubmittedAt
+    if (state.crFilter.from) {
+      requests = requests.filter(function (r) {
+        var d = String(r.SubmittedAt || '').slice(0, 10);
+        return d >= state.crFilter.from;
+      });
+    }
+    if (state.crFilter.to) {
+      requests = requests.filter(function (r) {
+        var d = String(r.SubmittedAt || '').slice(0, 10);
+        return d <= state.crFilter.to;
+      });
+    }
+    // 状态筛选
+    if (state.crFilter.status) {
+      requests = requests.filter(function (r) {
+        return r.Status === state.crFilter.status;
+      });
+    }
+
+    if (requests.length === 0) {
+      container.innerHTML = '<div class="empty">暂无客户申请</div>';
+      return;
+    }
+
+    container.innerHTML = requests.map(function (r) {
+      var items = (state.customerRequestItems || []).filter(function (i) {
+        return i.RequestID === r.RequestID;
+      });
+
+      var st = r.Status || 'submitted';
+      var label = CR_STATUS_LABELS[st] || st;
+      var chipClass = CR_STATUS_CHIPS[st] || 'chip-p';
+      var custName = escapeHTML(r.CustomerName || r.CustomerID || '');
+      var date = String(r.SubmittedAt || '').slice(0, 10);
+
+      var linesHtml = '';
+      if (items.length) {
+        linesHtml = items.map(function (d) {
+          var qty = Number(d.Qty || 0);
+          var salesQty = d.SalesQty != null ? Number(d.SalesQty) : null;
+          var effectiveQty = Number(d.EffectiveQty || d.Qty || 0);
+          var unitPrice = d.UnitPrice != null ? Number(d.UnitPrice) : null;
+          var lineTotal = d.LineTotal != null ? Number(d.LineTotal) : null;
+          var ws = d.WarehouseStatus || '';
+
+          var priceText = '';
+          if (seePrice && unitPrice !== null) {
+            priceText = ' x ' + fmtMoney(unitPrice);
+            if (lineTotal !== null) priceText += ' = ' + fmtMoney(lineTotal);
+          }
+
+          var qtyText;
+          if (!seePrice) {
+            qtyText = fmtNum(effectiveQty);
+          } else if (salesQty !== null && salesQty !== qty) {
+            qtyText = '<span style="text-decoration:line-through;color:var(--text2)">' + fmtNum(qty) + '</span> ' + fmtNum(salesQty);
+          } else {
+            qtyText = fmtNum(qty);
+          }
+
+          var wsBadge = '';
+          if (ws) {
+            var wsColor = ws === '有货' ? 'var(--primary)' : (ws === '部分有货' ? '#b45309' : 'var(--danger)');
+            wsBadge = ' <span style="font-size:11px;color:' + wsColor + '">' + escapeHTML(ws) + '</span>';
+          }
+
+          return '<div class="order-line-row">' +
+            '<div>' +
+            '<div class="order-line-title">' + escapeHTML(d.ProductName || d.ProductID) + wsBadge + '</div>' +
+            '<div class="order-line-sub">' + qtyText + ' ' + escapeHTML(d.Unit || '') + priceText + '</div>' +
+            (d.WarehouseNote ? '<div class="row-sub">仓库备注：' + escapeHTML(d.WarehouseNote) + '</div>' : '') +
+            '</div>' +
+            (seePrice && lineTotal !== null ? '<strong>' + fmtMoney(lineTotal) + '</strong>' : '') +
+            '</div>';
+        }).join('');
+      } else {
+        linesHtml = '<div class="empty small">没有产品明细</div>';
+      }
+
+      return '<div class="card">' +
+        '<div class="row-flex" style="margin-bottom:5px">' +
+        '<span class="mono">' + escapeHTML(r.RequestID || '') + '</span>' +
+        '<span class="chip ' + chipClass + '">' + label + '</span>' +
+        '</div>' +
+        '<div class="row-sub">' + custName + ' · ' + date + '</div>' +
+        (r.CustomerNote ? '<div class="row-sub">客户备注：' + escapeHTML(r.CustomerNote) + '</div>' : '') +
+        (seePrice && r.SalesNote ? '<div class="row-sub">Sales 备注：' + escapeHTML(r.SalesNote) + '</div>' : '') +
+        (r.WarehouseNote ? '<div class="row-sub">仓库备注：' + escapeHTML(r.WarehouseNote) + '</div>' : '') +
+        linesHtml +
+        (seePrice && r.RejectReason ? '<div class="row-sub" style="color:var(--danger)">拒绝原因：' + escapeHTML(r.RejectReason) + '</div>' : '') +
+        (seePrice && r.ConvertedPOID ? '<div class="row-sub">已转正式订单：<span class="mono">' + escapeHTML(r.ConvertedPOID) + '</span></div>' : '') +
+        (seePrice && ['submitted','sales_review','warehouse_check','waiting_customer'].indexOf(r.Status) !== -1
+          ? '<div style="margin-top:8px"><button class="btn btn-primary sm cr-review-btn" data-rid="' + escapeHTML(r.RequestID) + '">审核 / 改价</button></div>'
+          : '') +
+        (r.Status === 'warehouse_check' && canPrepareOrder()
+          ? '<div style="margin-top:4px"><button class="btn btn-primary sm cr-wh-btn" data-rid="' + escapeHTML(r.RequestID) + '">查货</button></div>'
+          : '') +
+        (seePrice && ['submitted','sales_review','warehouse_check','waiting_customer','confirmed'].indexOf(r.Status) !== -1
+          ? '<div style="margin-top:4px"><button class="btn sm cr-contact-btn" data-rid="' + escapeHTML(r.RequestID) + '">联系客户</button></div>'
+          : '') +
+        (seePrice && r.Status === 'confirmed'
+          ? '<div style="margin-top:4px"><button class="btn btn-primary sm cr-convert-btn" data-rid="' + escapeHTML(r.RequestID) + '">转正式订单</button></div>'
+          : '') +
+        '</div>';
+    }).join('');
+
+    // 绑定审核按钮事件
+    container.querySelectorAll('.cr-review-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openCRReviewModal(this.dataset.rid);
+      });
+    });
+
+    // 绑定查货按钮事件
+    container.querySelectorAll('.cr-wh-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openCRWarehouseModal(this.dataset.rid);
+      });
+    });
+
+    // 绑定联系客户按钮事件
+    container.querySelectorAll('.cr-contact-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openCRContactModal(this.dataset.rid);
+      });
+    });
+
+    // 绑定转正式订单按钮事件
+    container.querySelectorAll('.cr-convert-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        convertCRToOrder(this.dataset.rid);
+      });
+    });
+  }
+
+  // ============================================================
+  // Sales 审核 Modal
+  // ============================================================
+  function openCRReviewModal(requestId) {
+    var req = null;
+    for (var i = 0; i < state.customerRequests.length; i++) {
+      if (state.customerRequests[i].RequestID === requestId) {
+        req = state.customerRequests[i];
+        break;
+      }
+    }
+    if (!req) return;
+
+    var items = (state.customerRequestItems || []).filter(function (it) {
+      return it.RequestID === requestId;
+    });
+
+    state.currentCRRequestID = requestId;
+    document.getElementById('cr-review-title').textContent = '审核客户申请 ' + requestId;
+    document.getElementById('cr-review-meta').textContent =
+      '客户：' + (req.CustomerName || req.CustomerID) + ' · 状态：' +
+      (STATUS_LABELS_CR[req.Status] || req.Status);
+    document.getElementById('cr-review-sales-note').value = req.SalesNote || '';
+    document.getElementById('cr-review-error').style.display = 'none';
+
+    // 渲染可编辑明细
+    var itemsContainer = document.getElementById('cr-review-items');
+    itemsContainer.innerHTML = items.map(function (d, idx) {
+      var salesQty = d.SalesQty != null ? Number(d.SalesQty) : '';
+      var unitPrice = d.UnitPrice != null ? Number(d.UnitPrice) : '';
+      var lineTotal = d.LineTotal != null ? Number(d.LineTotal) : (salesQty !== '' && unitPrice !== '' ? Number(salesQty) * Number(unitPrice) : 0);
+      return '<div class="cr-review-item" data-id="' + d.id + '" data-idx="' + idx + '" style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">' +
+        '<div style="font-weight:600;margin-bottom:4px">' + escapeHTML(d.ProductName || d.ProductID) + ' <span style="font-weight:400;color:var(--text2);font-size:13px">' + escapeHTML(d.Unit || '') + '</span></div>' +
+        '<div style="font-size:13px;color:var(--text2);margin-bottom:6px">客户数量：' + fmtNum(Number(d.Qty || 0)) + (d.CustomerNote ? ' · ' + escapeHTML(d.CustomerNote) : '') + '</div>' +
+        '<div class="order-line-inputs">' +
+          '<div class="form-group"><label class="form-label">Sales 数量</label><input type="number" class="cr-sales-qty" value="' + salesQty + '" placeholder="' + fmtNum(Number(d.Qty || 0)) + '" min="0" step="any" style="width:100%"></div>' +
+          '<div class="form-group"><label class="form-label">单价 (RM)</label><input type="number" class="cr-unit-price" value="' + unitPrice + '" placeholder="0.00" min="0" step="0.01" style="width:100%"></div>' +
+        '</div>' +
+        '<div style="font-size:13px;text-align:right;margin-top:4px;color:var(--text2)">小计：<strong class="cr-line-total">' + fmtMoney(lineTotal) + '</strong></div>' +
+        '</div>';
+    }).join('');
+
+    // 绑定实时计算
+    itemsContainer.querySelectorAll('.cr-sales-qty, .cr-unit-price').forEach(function (input) {
+      input.addEventListener('input', function () {
+        var itemEl = this.closest('.cr-review-item');
+        var qty = parseFloat(itemEl.querySelector('.cr-sales-qty').value) || 0;
+        var price = parseFloat(itemEl.querySelector('.cr-unit-price').value) || 0;
+        itemEl.querySelector('.cr-line-total').textContent = fmtMoney(qty * price);
+      });
+    });
+
+    // 状态流转按钮
+    var status = req.Status;
+    var actionsContainer = document.getElementById('cr-review-actions');
+    actionsContainer.innerHTML = '';
+
+    var transitions = [];
+    if (status === 'submitted')    transitions = [{ s: 'sales_review',    label: '送 Sales 审核' }];
+    if (status === 'sales_review') transitions = [{ s: 'warehouse_check', label: '送仓库查货' }];
+    if (status === 'warehouse_check') transitions = [
+      { s: 'waiting_customer', label: '通知客户等待' },
+      { s: 'confirmed',       label: '确认可出货' }
+    ];
+    if (status === 'waiting_customer') transitions = [{ s: 'confirmed', label: '客户已确认' }];
+
+    transitions.forEach(function (t) {
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-primary sm';
+      btn.textContent = t.label;
+      btn.addEventListener('click', function () {
+        submitCRReview(requestId, t.s);
+      });
+      actionsContainer.appendChild(btn);
+    });
+
+    document.getElementById('modal-cr-review').classList.add('open');
+  }
+
+  function collectCRReviewItems() {
+    var items = [];
+    document.querySelectorAll('#cr-review-items .cr-review-item').forEach(function (el) {
+      var id = el.dataset.id;
+      var qty = parseFloat(el.querySelector('.cr-sales-qty').value);
+      var price = parseFloat(el.querySelector('.cr-unit-price').value);
+      if (!isNaN(qty) || !isNaN(price)) {
+        items.push({
+          id: parseInt(id),
+          sales_qty: isNaN(qty) ? null : qty,
+          unit_price: isNaN(price) ? null : price
+        });
+      }
+    });
+    return items;
+  }
+
+  function submitCRReview(requestId, newStatus) {
+    var items = collectCRReviewItems();
+    var note = (document.getElementById('cr-review-sales-note').value || '').trim();
+    var errEl = document.getElementById('cr-review-error');
+
+    // 客户端前置校验
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].sales_qty !== null && items[i].sales_qty <= 0) {
+        errEl.textContent = 'Sales 数量必须大于 0';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (items[i].unit_price !== null && items[i].unit_price < 0) {
+        errEl.textContent = '单价不能为负数';
+        errEl.style.display = 'block';
+        return;
+      }
+    }
+    errEl.style.display = 'none';
+
+    sbRpc('sales_update_customer_request', {
+      p_request_id: requestId,
+      p_items: items.length ? items : null,
+      p_sales_note: note || null,
+      p_new_status: newStatus
+    }).then(function () {
+      document.getElementById('modal-cr-review').classList.remove('open');
+      loadCustomerRequests().then(renderCustomerRequests);
+    }).catch(function (e) {
+      errEl.textContent = e.message || '保存失败';
+      errEl.style.display = 'block';
+    });
+  }
+
+  // ============================================================
+  // Warehouse 查货 Modal
+  // ============================================================
+  function openCRWarehouseModal(requestId) {
+    var req = null;
+    for (var i = 0; i < state.customerRequests.length; i++) {
+      if (state.customerRequests[i].RequestID === requestId) {
+        req = state.customerRequests[i];
+        break;
+      }
+    }
+    if (!req || req.Status !== 'warehouse_check') return;
+
+    var items = (state.customerRequestItems || []).filter(function (it) {
+      return it.RequestID === requestId;
+    });
+
+    state.currentCRWarehouseID = requestId;
+    document.getElementById('cr-wh-title').textContent = '仓库查货 ' + requestId;
+    document.getElementById('cr-wh-meta').textContent =
+      '客户：' + (req.CustomerName || req.CustomerID) +
+      ' · 状态：' + (STATUS_LABELS_CR[req.Status] || req.Status);
+    document.getElementById('cr-wh-note').value = req.WarehouseNote || '';
+    document.getElementById('cr-wh-error').style.display = 'none';
+
+    var itemsContainer = document.getElementById('cr-wh-items');
+    itemsContainer.innerHTML = items.map(function (d) {
+      var ws = d.WarehouseStatus || '';
+      var whQty = Number(d.EffectiveQty || d.Qty || 0);
+      return '<div class="cr-wh-item" data-id="' + d.id + '" style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">' +
+        '<div style="font-weight:600;margin-bottom:4px">' + escapeHTML(d.ProductName || d.ProductID) +
+        ' <span style="font-weight:400;color:var(--text2);font-size:13px">' + escapeHTML(d.Unit || '') + '</span></div>' +
+        '<div style="font-size:13px;color:var(--text2);margin-bottom:6px">数量：' + fmtNum(whQty) +
+        (d.CustomerNote ? ' · 客户备注：' + escapeHTML(d.CustomerNote) : '') + '</div>' +
+        '<div class="form-group"><label class="form-label">查货结果</label>' +
+        '<select class="cr-wh-status" style="width:100%">' +
+        '<option value="" disabled' + (ws ? '' : ' selected') + '>请选择…</option>' +
+        '<option value="有货"' + (ws === '有货' ? ' selected' : '') + '>有货</option>' +
+        '<option value="部分有货"' + (ws === '部分有货' ? ' selected' : '') + '>部分有货</option>' +
+        '<option value="无货"' + (ws === '无货' ? ' selected' : '') + '>无货</option>' +
+        '</select></div>' +
+        '<div class="form-group"><label class="form-label">仓库备注（可选）</label>' +
+        '<input type="text" class="cr-wh-item-note" value="' + escapeHTML(d.WarehouseNote || '') + '" placeholder="缺货原因等" style="width:100%"></div>' +
+        '</div>';
+    }).join('');
+
+    document.getElementById('modal-cr-warehouse').classList.add('open');
+  }
+
+  function collectCRWarehouseItems() {
+    var items = [];
+    document.querySelectorAll('#cr-wh-items .cr-wh-item').forEach(function (el) {
+      var ws = el.querySelector('.cr-wh-status').value;
+      var wn = (el.querySelector('.cr-wh-item-note').value || '').trim();
+      if (ws) {
+        items.push({
+          id: parseInt(el.dataset.id),
+          warehouse_status: ws,
+          warehouse_note: wn || null
+        });
+      }
+    });
+    return items;
+  }
+
+  function submitCRWarehouse() {
+    var requestId = state.currentCRWarehouseID;
+    if (!requestId) return;
+    var items = collectCRWarehouseItems();
+    var note = (document.getElementById('cr-wh-note').value || '').trim();
+    var errEl = document.getElementById('cr-wh-error');
+    var totalItems = document.querySelectorAll('#cr-wh-items .cr-wh-item').length;
+
+    errEl.style.display = 'none';
+
+    if (items.length !== totalItems) {
+      errEl.textContent = '请为每个产品选择查货结果';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    sbRpc('warehouse_update_customer_request', {
+      p_request_id: requestId,
+      p_items: items.length ? items : null,
+      p_warehouse_note: note || null
+    }).then(function () {
+      document.getElementById('modal-cr-warehouse').classList.remove('open');
+      loadCustomerRequests().then(renderCustomerRequests);
+    }).catch(function (e) {
+      errEl.textContent = e.message || '保存失败';
+      errEl.style.display = 'block';
+    });
+  }
+
+  // ============================================================
+  // 联系客户 / 拒绝 Modal
+  // ============================================================
+  function normalizeMalaysiaPhone(raw) {
+    var digits = String(raw || '').replace(/[^0-9]/g, '');
+    if (!digits) return '';
+    if (digits.indexOf('60') === 0 && digits.length >= 9) return digits;
+    if (digits.indexOf('0') === 0) return '60' + digits.slice(1);
+    if (digits.indexOf('1') === 0) return '60' + digits;
+    if (digits.length >= 9) return digits;
+    return '';
+  }
+
+  function openCRContactModal(requestId) {
+    var req = null;
+    for (var i = 0; i < state.customerRequests.length; i++) {
+      if (state.customerRequests[i].RequestID === requestId) {
+        req = state.customerRequests[i];
+        break;
+      }
+    }
+    if (!req) return;
+    if (req.Status === 'converted' || req.Status === 'cancelled' || req.Status === 'rejected') return;
+
+    state.currentCRContactID = requestId;
+
+    document.getElementById('cr-contact-title').textContent = '联系客户 ' + requestId;
+    document.getElementById('cr-contact-meta').textContent =
+      '客户：' + (req.CustomerName || req.CustomerID) +
+      ' · 状态：' + (STATUS_LABELS_CR[req.Status] || req.Status);
+    document.getElementById('cr-contact-note').value = '';
+    document.getElementById('cr-reject-reason').value = '';
+    document.getElementById('cr-reject-section').style.display = 'none';
+    document.getElementById('cr-contact-error').style.display = 'none';
+
+    // WhatsApp 快捷按钮
+    var cust = state.customers.get(req.CustomerID);
+    var waBtn = document.getElementById('cr-contact-wa');
+    if (cust && cust.Phone) {
+      var phone = normalizeMalaysiaPhone(cust.Phone);
+      if (phone) {
+        var text = encodeURIComponent(
+          '您好，关于您的订货申请 ' + requestId + '，'
+        );
+        waBtn.href = 'https://wa.me/' + phone + '?text=' + text;
+        waBtn.style.display = 'flex';
+      } else {
+        waBtn.style.display = 'none';
+      }
+    } else {
+      waBtn.style.display = 'none';
+    }
+
+    document.getElementById('modal-cr-contact').classList.add('open');
+  }
+
+  function submitCRContact() {
+    var requestId = state.currentCRContactID;
+    if (!requestId) return;
+    var method = document.getElementById('cr-contact-method').value;
+    var note = (document.getElementById('cr-contact-note').value || '').trim();
+    var errEl = document.getElementById('cr-contact-error');
+
+    if (!note) {
+      errEl.textContent = '请填写联系备注';
+      errEl.style.display = 'block';
+      return;
+    }
+    errEl.style.display = 'none';
+
+    sbRpc('sales_contact_customer', {
+      p_request_id: requestId,
+      p_contact_method: method,
+      p_contact_note: note
+    }).then(function () {
+      document.getElementById('modal-cr-contact').classList.remove('open');
+      loadCustomerRequests().then(renderCustomerRequests);
+    }).catch(function (e) {
+      errEl.textContent = e.message || '保存失败';
+      errEl.style.display = 'block';
+    });
+  }
+
+  function submitCRReject() {
+    var requestId = state.currentCRContactID;
+    if (!requestId) return;
+    var method = document.getElementById('cr-contact-method').value;
+    var note = (document.getElementById('cr-contact-note').value || '').trim();
+    var reason = (document.getElementById('cr-reject-reason').value || '').trim();
+    var errEl = document.getElementById('cr-contact-error');
+
+    // 先显示拒绝原因区
+    var rejectSection = document.getElementById('cr-reject-section');
+    if (rejectSection.style.display === 'none') {
+      rejectSection.style.display = 'block';
+      document.getElementById('cr-reject-reason').focus();
+      return;
+    }
+
+    if (!note) {
+      errEl.textContent = '请填写联系备注';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!reason) {
+      errEl.textContent = '请填写拒绝原因';
+      errEl.style.display = 'block';
+      return;
+    }
+    errEl.style.display = 'none';
+
+    sbRpc('sales_contact_customer', {
+      p_request_id: requestId,
+      p_contact_method: method,
+      p_contact_note: note,
+      p_reject_reason: reason
+    }).then(function () {
+      document.getElementById('modal-cr-contact').classList.remove('open');
+      loadCustomerRequests().then(renderCustomerRequests);
+    }).catch(function (e) {
+      errEl.textContent = e.message || '拒绝失败';
+      errEl.style.display = 'block';
+    });
+  }
+
+  // ============================================================
+  // 转正式订单
+  // ============================================================
+  function convertCRToOrder(requestId) {
+    if (!confirm('确认将客户申请 ' + requestId + ' 转换为 YCPos 正式订单？\n\n转换后将生成 purchase_orders 并进入现有出货流程，不可撤销。')) {
+      return;
+    }
+
+    sbRpc('convert_customer_request_to_order', {
+      p_request_id: requestId
+    }).then(function (result) {
+      showToast('已转正式订单：' + (result || ''));
+      loadCustomerRequests().then(renderCustomerRequests);
+      // 刷新订单列表，让新 PO 出现在订单页
+      loadOrdersForCurrentRole().then(function (bundle) {
+        if (bundle) {
+          state.orders = bundle.orders || [];
+          state.orderDetails = new Map();
+          (bundle.orderDetails || []).forEach(function (d) {
+            var arr = state.orderDetails.get(d.POID) || [];
+            arr.push(d);
+            state.orderDetails.set(d.POID, arr);
+          });
+        }
+      });
+    }).catch(function (e) {
+      showToast('转换失败：' + (e.message || '未知错误'), 'err');
     });
   }
 
@@ -1529,6 +2109,25 @@ function applyPermissions() {
       document.getElementById('order-date-to').value = '';
       renderOrders();
     });
+    document.getElementById('cr-date-from').addEventListener('change', function() {
+      state.crFilter.from = this.value;
+      renderCustomerRequests();
+    });
+    document.getElementById('cr-date-to').addEventListener('change', function() {
+      state.crFilter.to = this.value;
+      renderCustomerRequests();
+    });
+    document.getElementById('cr-status-filter').addEventListener('change', function() {
+      state.crFilter.status = this.value;
+      renderCustomerRequests();
+    });
+    document.getElementById('btn-cr-clear').addEventListener('click', function() {
+      state.crFilter = { from: '', to: '', status: '' };
+      document.getElementById('cr-date-from').value = '';
+      document.getElementById('cr-date-to').value = '';
+      document.getElementById('cr-status-filter').value = '';
+      renderCustomerRequests();
+    });
 
     // 产品选择 change 事件 → 更新数量单位标签
     document.getElementById('f-prod').addEventListener('change', updateQtyLabels);
@@ -1563,6 +2162,49 @@ function applyPermissions() {
     document.querySelectorAll('.btn-cancel').forEach(btn => {
       btn.addEventListener('click', closeModal);
     });
+
+    // Sales 审核 — 仅保存不改变状态
+    document.getElementById('btn-cr-save').addEventListener('click', function () {
+      var requestId = state.currentCRRequestID;
+      if (!requestId) return;
+      var items = collectCRReviewItems();
+      var note = (document.getElementById('cr-review-sales-note').value || '').trim();
+      var errEl = document.getElementById('cr-review-error');
+      errEl.style.display = 'none';
+
+      // 前端校验
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].sales_qty !== null && items[i].sales_qty <= 0) {
+          errEl.textContent = 'Sales 数量必须大于 0';
+          errEl.style.display = 'block';
+          return;
+        }
+        if (items[i].unit_price !== null && items[i].unit_price < 0) {
+          errEl.textContent = '单价不能为负数';
+          errEl.style.display = 'block';
+          return;
+        }
+      }
+
+      sbRpc('sales_update_customer_request', {
+        p_request_id: requestId,
+        p_items: items.length ? items : null,
+        p_sales_note: note || null
+      }).then(function () {
+        document.getElementById('modal-cr-review').classList.remove('open');
+        loadCustomerRequests().then(renderCustomerRequests);
+      }).catch(function (e) {
+        errEl.textContent = e.message || '保存失败';
+        errEl.style.display = 'block';
+      });
+    });
+
+    // Warehouse 查货保存
+    document.getElementById('btn-cr-wh-save').addEventListener('click', submitCRWarehouse);
+
+    // 联系客户 / 拒绝
+    document.getElementById('btn-cr-contact-save').addEventListener('click', submitCRContact);
+    document.getElementById('btn-cr-reject').addEventListener('click', submitCRReject);
 
     // Service Worker
     if ('serviceWorker' in navigator) {

@@ -134,6 +134,28 @@
       <div class="section-title">操作审计日志</div>
       <div id="audit-list"><div class="loading">加载中...</div></div>
     </div>
+
+    <!-- 客户申请 -->
+    <div class="page" id="page-customer-requests">
+      <div class="section-title">客户订货申请</div>
+      <div class="filter-row">
+        <input type="date" id="cr-date-from" title="开始日期">
+        <input type="date" id="cr-date-to" title="结束日期">
+        <select id="cr-status-filter">
+          <option value="">全部状态</option>
+          <option value="submitted">已提交</option>
+          <option value="sales_review">Sales 审核中</option>
+          <option value="warehouse_check">仓库查货中</option>
+          <option value="waiting_customer">等待客户回复</option>
+          <option value="confirmed">已确认</option>
+          <option value="converted">已转正式订单</option>
+          <option value="rejected">已拒绝</option>
+          <option value="cancelled">已取消</option>
+        </select>
+        <button class="btn-secondary inline" id="btn-cr-clear" type="button">清除</button>
+      </div>
+      <div id="cr-requests-list"><div class="loading">加载中...</div></div>
+    </div>
   </div>
 
   <div class="nav" id="nav-bar">
@@ -144,6 +166,7 @@
     <button class="nav-btn" data-page="processing"><span class="nav-icon">⚖️</span>加工</button>
     <button class="nav-btn" data-page="suppliers"><span class="nav-icon">🏭</span>供应商</button>
     <button class="nav-btn" data-page="customers"><span class="nav-icon">👥</span>客户</button>
+    <button class="nav-btn" data-page="customer-requests"><span class="nav-icon">📝</span>客户申请</button>
     <button class="nav-btn" data-page="audit" id="nav-audit" style="display:none"><span class="nav-icon">📜</span>审计</button>
   </div>
 </div>
@@ -271,6 +294,93 @@
     <div class="form-group"><label class="form-label">确认新密码</label><input type="password" id="cp-confirm" placeholder="再次输入新密码"></div>
     <button class="btn-primary" id="btn-changepw">修改密码</button>
     <button class="btn-cancel" id="btn-changepw-cancel">取消</button>
+  </div>
+</div>
+
+<!-- Sales 审核客户申请 Modal -->
+<div class="modal-bg" id="modal-cr-review">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="cr-review-title">审核客户申请</div>
+    <div id="cr-review-meta" style="font-size:13px;margin-bottom:8px;color:var(--text2)"></div>
+
+    <div class="section-title" style="margin-top:0">产品明细</div>
+    <div id="cr-review-items"></div>
+
+    <div class="form-group">
+      <label class="form-label">Sales 备注</label>
+      <textarea id="cr-review-sales-note" rows="2" placeholder="价格依据、客户沟通记录等"></textarea>
+    </div>
+
+    <div id="cr-review-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>
+    <div id="cr-review-error" style="color:var(--danger);font-size:13px;margin-bottom:8px;display:none"></div>
+
+    <button class="btn-primary" id="btn-cr-save">保存修改（不改变状态）</button>
+    <button class="btn-cancel" id="btn-cr-review-cancel">关闭</button>
+  </div>
+</div>
+
+<!-- Warehouse 查货 Modal -->
+<div class="modal-bg" id="modal-cr-warehouse">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="cr-wh-title">仓库查货</div>
+    <div id="cr-wh-meta" style="font-size:13px;margin-bottom:8px;color:var(--text2)"></div>
+
+    <div class="section-title" style="margin-top:0">查货明细</div>
+    <div id="cr-wh-items"></div>
+
+    <div class="form-group">
+      <label class="form-label">仓库整单备注（可选）</label>
+      <textarea id="cr-wh-note" rows="2" placeholder="缺货原因、预计补货时间等"></textarea>
+    </div>
+
+    <div id="cr-wh-error" style="color:var(--danger);font-size:13px;margin-bottom:8px;display:none"></div>
+
+    <button class="btn-primary" id="btn-cr-wh-save">保存查货结果</button>
+    <button class="btn-cancel" id="btn-cr-wh-cancel">关闭</button>
+  </div>
+</div>
+
+<!-- 联系客户 / 拒绝 Modal -->
+<div class="modal-bg" id="modal-cr-contact">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="cr-contact-title">联系客户</div>
+    <div id="cr-contact-meta" style="font-size:13px;margin-bottom:8px;color:var(--text2)"></div>
+
+    <a id="cr-contact-wa" href="#" target="_blank" rel="noopener"
+       style="display:none;align-items:center;gap:6px;background:#25d366;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:500;margin-bottom:12px">
+      WhatsApp 联系客户
+    </a>
+
+    <div class="form-group">
+      <label class="form-label">联系方式</label>
+      <select id="cr-contact-method">
+        <option value="WhatsApp">WhatsApp</option>
+        <option value="电话">电话</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">联系备注</label>
+      <textarea id="cr-contact-note" rows="3" placeholder="沟通内容、客户回复等"></textarea>
+    </div>
+
+    <div id="cr-reject-section" style="display:none">
+      <div class="form-group">
+        <label class="form-label" style="color:var(--danger)">拒绝原因</label>
+        <textarea id="cr-reject-reason" rows="2" placeholder="请填写拒绝原因，客户将看到此信息"></textarea>
+      </div>
+    </div>
+
+    <div id="cr-contact-error" style="color:var(--danger);font-size:13px;margin-bottom:8px;display:none"></div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" id="btn-cr-contact-save">记录联系</button>
+      <button class="btn" id="btn-cr-reject" style="background:var(--danger);color:#fff">拒绝申请</button>
+      <button class="btn-cancel" id="btn-cr-contact-cancel">关闭</button>
+    </div>
   </div>
 </div>
 

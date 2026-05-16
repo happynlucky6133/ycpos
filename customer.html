@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FreshStack Order — 客户订货</title>
+  <link rel="stylesheet" href="customer.css">
+</head>
+<body>
+
+  <!-- 加载中 -->
+  <div id="loading" class="state-screen">
+    <div class="spinner"></div>
+    <p>正在加载…</p>
+  </div>
+
+  <!-- 无权限 -->
+  <div id="error" class="state-screen" style="display:none">
+    <div class="error-icon">!</div>
+    <h2>无权限访问</h2>
+    <p>链接无效或已过期，请联系您的销售代表获取新的订货链接。</p>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="main" style="display:none">
+    <header>
+      <h1>FreshStack Order</h1>
+      <div id="customer-badge"></div>
+    </header>
+
+    <main>
+      <!-- 下单区 -->
+      <section id="new-order" class="card">
+        <h2>新建订货申请</h2>
+
+        <div id="item-list"></div>
+
+        <button id="btn-add-item" type="button" class="btn btn-outline">+ 添加产品</button>
+
+        <div class="field">
+          <label for="order-note">整单备注（可选）</label>
+          <textarea id="order-note" rows="2" placeholder="例如：请安排在周五前出货"></textarea>
+        </div>
+
+        <button id="btn-submit" type="button" class="btn btn-primary btn-block">提交申请</button>
+        <p id="submit-error" class="form-error"></p>
+      </section>
+
+      <!-- 成功提示 -->
+      <div id="success-toast" class="toast" style="display:none">
+        申请已提交，请等待 Sales 确认。
+      </div>
+
+      <!-- 历史申请 -->
+      <section id="history" class="card">
+        <h2>我的申请记录</h2>
+        <div id="history-list"></div>
+        <p id="history-empty" style="display:none">暂无申请记录</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="customer.js"></script>
+</body>
+</html>

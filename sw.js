@@ -1,5 +1,5 @@
-/* ===== YCPos Service Worker v4 - 子路径兼容版 ===== */
-const CACHE = 'ycpos-v13';
+/* ===== YCPos Service Worker v5 — 子路径 + FreshStack Order ===== */
+const CACHE = 'ycpos-v14';
 const STATIC_ASSETS = [
   '.',
   './index.html',
@@ -50,6 +50,16 @@ self.addEventListener('fetch', e => {
   // API 请求永远走网络，不缓存业务数据，避免换账号或离线时看到旧资料。
   if (url.includes('supabase.co')) {
     e.respondWith(fetch(e.request));
+    return;
+  }
+
+  // FreshStack Order 客户页面：网络优先，不缓存，确保客户总是拿到最新版本
+  if (url.includes('/yc/')) {
+    e.respondWith(
+      fetch(e.request).catch(function () {
+        return caches.match(e.request);
+      })
+    );
     return;
   }
 
