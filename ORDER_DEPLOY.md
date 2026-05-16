@@ -4,7 +4,7 @@
 
 ```
 ycpos.freshstack.cc             -> 内部员工入口 -> GitHub Pages 根目录
-order.freshstack.cc/yc          -> 客户订货入口 -> Cloudflare Worker -> GitHub Pages /yc/
+order.freshstack.cc/yc          -> 客户订货入口 -> Cloudflare Worker -> ycpos.freshstack.cc/yc/
 ```
 
 内部系统和客户系统仍放在同一个 GitHub 仓库，但外部访问由 Cloudflare 分流：
@@ -12,6 +12,7 @@ order.freshstack.cc/yc          -> 客户订货入口 -> Cloudflare Worker -> Gi
 - 员工打开 `https://ycpos.freshstack.cc`
 - 客户打开 `https://order.freshstack.cc/yc?token=客户专属链接`
 - Cloudflare Worker 只代理 `/yc/` 客户页面，不开放内部 `index.html`
+- `/yc?token=...` 会自动跳到 `/yc/?token=...`，避免客户链接少一个斜杠时页面资源加载错误
 
 ## 文件布局
 
@@ -79,10 +80,10 @@ https://happynlucky6133.github.io/ycpos/yc/?token=test-token-2026
 
 ### Worker 路由
 
-在 Cloudflare 设置 Worker Route：
+在 Cloudflare 设置 Worker Custom Domain：
 
 ```
-order.freshstack.cc/yc*
+order.freshstack.cc
 ```
 
 ### Worker 代码
@@ -96,13 +97,18 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
+    if (url.pathname === "/yc") {
+      url.pathname = "/yc/";
+      return Response.redirect(url.toString(), 301);
+    }
+
     let targetPath = url.pathname.replace(/^\/yc\/?/, "/yc/");
     if (targetPath === "/yc/") {
       targetPath = "/yc/index.html";
     }
 
     const targetUrl = new URL(
-      `https://happynlucky6133.github.io/ycpos${targetPath}${url.search}`
+      `https://ycpos.freshstack.cc${targetPath}${url.search}`
     );
 
     const response = await fetch(targetUrl.toString(), {
@@ -130,9 +136,9 @@ export default {
 
 | 名称 | 类型 | 目标 | Proxy |
 |------|------|------|-------|
-| order | A 或 CNAME | 任意可代理目标 / Worker route 接管 | Proxied |
+| order | Worker Custom Domain 自动管理 | freshstack-order | Proxied |
 
-重点是 `order.freshstack.cc/yc*` 要命中 Worker route。
+重点是 `order.freshstack.cc` 要命中 Worker Custom Domain；Worker 内部只允许 `/yc` 路径。
 
 ## 可选：Redirect Rule
 
