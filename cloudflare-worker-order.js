@@ -11,8 +11,9 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
+    const isAsset = /\.(css|js|png|jpg|jpeg|webp|svg|ico|json)$/i.test(url.pathname);
     let targetPath = url.pathname.replace(/^\/yc\/?/, "/yc/");
-    if (targetPath === "/yc/") {
+    if (targetPath === "/yc/" || !isAsset) {
       targetPath = "/yc/index.html";
     }
 

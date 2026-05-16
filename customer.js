@@ -65,7 +65,16 @@
 
   function getTokenFromURL() {
     var params = new URLSearchParams(window.location.search);
-    return (params.get('token') || '').trim();
+    var queryToken = (params.get('token') || params.get('code') || '').trim();
+    if (queryToken) return queryToken;
+
+    var parts = window.location.pathname.split('/').filter(Boolean);
+    var ycIndex = parts.indexOf('yc');
+    if (ycIndex >= 0 && parts[ycIndex + 1]) {
+      return decodeURIComponent(parts[ycIndex + 1]).trim();
+    }
+
+    return '';
   }
 
   // ============================================================
