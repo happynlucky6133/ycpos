@@ -1,5 +1,5 @@
-/* ===== YCPos Service Worker v5 — 子路径 + FreshStack Order ===== */
-const CACHE = 'ycpos-v14';
+/* ===== YCPos Service Worker v5 - 子路径 + FreshStack Order ===== */
+const CACHE = 'ycpos-v20';
 const STATIC_ASSETS = [
   '.',
   './index.html',

@@ -53,6 +53,45 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION create_staff_profile(
+  p_email TEXT,
+  p_display_name TEXT,
+  p_role TEXT,
+  p_active BOOLEAN DEFAULT true
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_user_id UUID;
+BEGIN
+  PERFORM require_role(ARRAY['admin']);
+  IF p_role NOT IN ('admin', 'sales', 'purchase', 'warehouse') THEN
+    RAISE EXCEPTION 'Invalid role';
+  END IF;
+
+  SELECT id INTO v_user_id
+  FROM auth.users
+  WHERE lower(email) = lower(trim(p_email))
+  LIMIT 1;
+
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Auth user not found';
+  END IF;
+
+  INSERT INTO staff_profiles (id, "DisplayName", "Role", "Active")
+  VALUES (v_user_id, COALESCE(NULLIF(trim(p_display_name), ''), trim(p_email)), p_role, COALESCE(p_active, true))
+  ON CONFLICT (id) DO UPDATE
+  SET "DisplayName" = EXCLUDED."DisplayName",
+      "Role" = EXCLUDED."Role",
+      "Active" = EXCLUDED."Active";
+
+  RETURN v_user_id;
+END;
+$$;
+
 -- ---------- AutoCount 同步预留 ----------
 ALTER TABLE products ADD COLUMN IF NOT EXISTS "AutoCountItemCode" TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS "AutoCountCreditorCode" TEXT;
@@ -129,6 +168,19 @@ CREATE POLICY "staff can read own profile"
 ON staff_profiles FOR SELECT
 TO authenticated
 USING (id = auth.uid() OR app_role() = 'admin');
+
+DROP POLICY IF EXISTS "admin can insert staff profiles" ON staff_profiles;
+CREATE POLICY "admin can insert staff profiles"
+ON staff_profiles FOR INSERT
+TO authenticated
+WITH CHECK (app_role() = 'admin');
+
+DROP POLICY IF EXISTS "admin can update staff profiles" ON staff_profiles;
+CREATE POLICY "admin can update staff profiles"
+ON staff_profiles FOR UPDATE
+TO authenticated
+USING (app_role() = 'admin')
+WITH CHECK (app_role() = 'admin');
 
 DROP POLICY IF EXISTS "authenticated can read products" ON products;
 CREATE POLICY "authenticated can read products"
@@ -262,7 +314,7 @@ AS $$
 DECLARE
   v_product_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'sales', 'purchase']);
   IF NULLIF(trim(p_product_name), '') IS NULL THEN RAISE EXCEPTION 'Product name is required'; END IF;
 
   v_product_id := 'p' || substr(md5(now()::text || random()::text), 1, 6);
@@ -291,7 +343,7 @@ AS $$
 DECLARE
   v_supplier_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'purchase']);
   IF NULLIF(trim(p_supplier_name), '') IS NULL THEN RAISE EXCEPTION 'Supplier name is required'; END IF;
 
   v_supplier_id := 'S' || upper(substr(md5(now()::text || random()::text), 1, 6));
@@ -320,7 +372,7 @@ AS $$
 DECLARE
   v_customer_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'sales']);
   IF NULLIF(trim(p_customer_name), '') IS NULL THEN RAISE EXCEPTION 'Customer name is required'; END IF;
 
   v_customer_id := 'C' || upper(substr(md5(now()::text || random()::text), 1, 6));
@@ -570,3 +622,4 @@ GRANT EXECUTE ON FUNCTION process_fruit_loss(TEXT, TEXT, NUMERIC, NUMERIC, NUMER
 GRANT EXECUTE ON FUNCTION create_sales_order(TEXT, JSONB, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION change_sales_order_status(TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION get_orders_app() TO authenticated;
+GRANT EXECUTE ON FUNCTION create_staff_profile(TEXT, TEXT, TEXT, BOOLEAN) TO authenticated;

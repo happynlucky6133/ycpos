@@ -8,6 +8,62 @@ ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS "TotalAmount" NUMERIC DEFAU
 ALTER TABLE po_details ADD COLUMN IF NOT EXISTS "UnitPrice" NUMERIC DEFAULT 0;
 ALTER TABLE po_details ADD COLUMN IF NOT EXISTS "LineTotal" NUMERIC DEFAULT 0;
 
+ALTER TABLE staff_profiles ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "admin can insert staff profiles" ON staff_profiles;
+CREATE POLICY "admin can insert staff profiles"
+ON staff_profiles FOR INSERT
+TO authenticated
+WITH CHECK (app_role() = 'admin');
+
+DROP POLICY IF EXISTS "admin can update staff profiles" ON staff_profiles;
+CREATE POLICY "admin can update staff profiles"
+ON staff_profiles FOR UPDATE
+TO authenticated
+USING (app_role() = 'admin')
+WITH CHECK (app_role() = 'admin');
+
+CREATE OR REPLACE FUNCTION create_staff_profile(
+  p_email TEXT,
+  p_display_name TEXT,
+  p_role TEXT,
+  p_active BOOLEAN DEFAULT true
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_user_id UUID;
+BEGIN
+  PERFORM require_role(ARRAY['admin']);
+  IF p_role NOT IN ('admin', 'sales', 'purchase', 'warehouse') THEN
+    RAISE EXCEPTION 'Invalid role';
+  END IF;
+
+  SELECT id INTO v_user_id
+  FROM auth.users
+  WHERE lower(email) = lower(trim(p_email))
+  LIMIT 1;
+
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Auth user not found';
+  END IF;
+
+  INSERT INTO staff_profiles (id, "DisplayName", "Role", "Active")
+  VALUES (v_user_id, COALESCE(NULLIF(trim(p_display_name), ''), trim(p_email)), p_role, COALESCE(p_active, true))
+  ON CONFLICT (id) DO UPDATE
+  SET "DisplayName" = EXCLUDED."DisplayName",
+      "Role" = EXCLUDED."Role",
+      "Active" = EXCLUDED."Active";
+
+  RETURN v_user_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION create_staff_profile(TEXT, TEXT, TEXT, BOOLEAN) TO authenticated;
+
 DO $$
 DECLARE
   v_constraint TEXT;
@@ -92,7 +148,7 @@ AS $$
 DECLARE
   v_product_id TEXT;
 BEGIN
-  PERFORM require_role(ARRAY['admin']);
+  PERFORM require_role(ARRAY['admin', 'sales', 'purchase']);
   IF NULLIF(trim(p_product_name), '') IS NULL THEN RAISE EXCEPTION 'Product name is required'; END IF;
 
   v_product_id := 'p' || substr(md5(now()::text || random()::text), 1, 6);

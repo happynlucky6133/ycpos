@@ -9,6 +9,11 @@
 <meta name="apple-mobile-web-app-title" content="YCPos">
 <meta name="description" content="YCPos 库存管理系统">
 <title>YCPos 库存系统</title>
+<script>
+  if (location.hostname === 'happynlucky6133.github.io') {
+    document.documentElement.innerHTML = '<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YCPos</title><style>body{margin:0;font-family:Arial,sans-serif;background:#f6f7f8;color:#222;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}.box{max-width:420px;background:#fff;border:1px solid #ddd;border-radius:10px;padding:24px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,.06)}h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.5;margin:0;color:#666}</style></head><body><div class="box"><h1>YCPos 入口已更新</h1><p>这个旧入口已经停用。请向管理员索取新的正式网址。</p></div></body>';
+  }
+</script>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="style.css">
@@ -268,15 +273,15 @@
   <div class="modal">
     <div class="modal-handle"></div>
     <div class="modal-title">新增用户</div>
-    <div class="form-group"><label class="form-label">用户名</label><input type="text" id="au-user" placeholder="输入登录用户名"></div>
+    <div class="form-group"><label class="form-label">员工 Email</label><input type="email" id="au-user" placeholder="输入员工登录 Email" autocomplete="username"></div>
     <div class="form-group"><label class="form-label">显示名称</label><input type="text" id="au-display" placeholder="输入显示名称"></div>
     <div class="form-group"><label class="form-label">密码</label><input type="password" id="au-pass" placeholder="输入密码"></div>
     <div class="form-group"><label class="form-label">角色</label>
       <select id="au-role">
-        <option value="admin">👑 管理员</option>
         <option value="sales">📋 销售员</option>
         <option value="purchase">📥 采购员</option>
         <option value="warehouse">🚚 仓库</option>
+        <option value="admin">👑 管理员</option>
       </select>
     </div>
     <button class="btn-primary" id="btn-adduser">添加用户</button>

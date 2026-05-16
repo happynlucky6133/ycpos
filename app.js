@@ -104,7 +104,7 @@
     if (!currentUser) return true;
     const role = currentUser.Role;
     if (role === 'admin') return true;
-    if (role === 'sales') return !['stockin', 'processing', 'suppliers', 'customers', 'audit'].includes(page);
+    if (role === 'sales') return !['stockin', 'processing', 'suppliers', 'audit'].includes(page);
     if (role === 'purchase' || role === 'warehouse') return !['customers', 'audit'].includes(page);
     return true;
   }
@@ -116,18 +116,17 @@
     const fabPages = ['stockin', 'products', 'orders', 'processing', 'suppliers', 'customers'];
     if (!fabPages.includes(page)) return false;
     if (role === 'admin') return true;
-    if (role === 'sales') return page === 'orders';
-    if (role === 'purchase') return page === 'stockin' || page === 'processing';
+    if (role === 'sales') return ['products', 'customers', 'orders'].includes(page);
+    if (role === 'purchase') return ['products', 'suppliers', 'stockin', 'processing'].includes(page);
     return false;
   }
 
   function canUseModal(modalId) {
     if (!currentUser) return false;
     const role = currentUser.Role;
-    // 所有 modal 只能 admin 操作，除了进货（purchase）和订单（sales）
     if (role === 'admin') return true;
-    if (role === 'purchase') return modalId === 'modal-si' || modalId === 'modal-processing';
-    if (role === 'sales') return modalId === 'modal-order';
+    if (role === 'purchase') return ['modal-prod', 'modal-supplier', 'modal-si', 'modal-processing'].includes(modalId);
+    if (role === 'sales') return ['modal-prod', 'modal-customer', 'modal-order'].includes(modalId);
     return false;
   }
 
@@ -255,6 +254,25 @@ function applyPermissions() {
     try { return JSON.parse(text); } catch { return text; }
   }
 
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function createStaffProfileWithRetry(profile) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        return await sbRpc('create_staff_profile', profile);
+      } catch (e) {
+        lastError = e;
+        const msg = getErrorMessage(e);
+        if (!msg.includes('Auth user not found')) throw e;
+        await sleep(700 + attempt * 500);
+      }
+    }
+    throw lastError || new Error('Auth user not found');
+  }
+
   async function loadOrdersForCurrentRole() {
     try {
       const bundle = await sbRpc('get_orders_app', {});
@@ -315,7 +333,14 @@ function applyPermissions() {
         },
         body: JSON.stringify({ email, password })
       });
-      if (!loginRes.ok) throw new Error('Email 或密码错误');
+      if (!loginRes.ok) {
+        const loginText = await loginRes.text();
+        const loginMsg = getErrorMessage(new Error(loginText));
+        if (loginMsg.includes('Email not confirmed')) {
+          throw new Error('Email 还未确认。请在 Supabase Auth 关闭 Confirm email，或先确认这个邮箱。');
+        }
+        throw new Error(loginMsg || 'Email 或密码错误');
+      }
       const session = await loginRes.json();
       authToken = session.access_token;
       localStorage.setItem('ycpos_auth_token', authToken);
@@ -477,6 +502,11 @@ function applyPermissions() {
   function formatProductLabel(p) {
     if (!p) return '';
     return p.ProductName + (p.Grade ? ' ' + p.Grade : '') + ' · ' + Number(p.StockBalance || 0) + ' ' + (p.Unit || 'kg');
+  }
+
+  function formatProductNameGrade(p) {
+    if (!p) return '';
+    return p.ProductName + (p.Grade ? ' ' + p.Grade : '');
   }
 
   function normalizeFruitName(name) {
@@ -841,7 +871,7 @@ function applyPermissions() {
     const container = document.getElementById('processing-list');
     if (!container) return;
     if (!state.processingLogs.length) {
-      container.innerHTML = '<div class="empty">暂无加工记录。请先在 Supabase 执行 supabase_processing.sql，再用右下角 + 新增。</div>';
+      container.innerHTML = '<div class="empty">暂无加工记录</div>';
       return;
     }
     container.innerHTML = [...state.processingLogs].reverse().map(log => {
@@ -856,7 +886,7 @@ function applyPermissions() {
           <span class="mono">${escapeHTML(log.ProcessID)}</span>
           <span style="font-size:11px;color:var(--text2)">${String(log.Date || '').slice(0,10)}</span>
         </div>
-        <div style="font-size:13px">${escapeHTML(formatProductLabel(source))} → <strong>${escapeHTML(formatProductLabel(target))}</strong></div>
+        <div style="font-size:13px">${escapeHTML(formatProductNameGrade(source))} → <strong>${escapeHTML(formatProductNameGrade(target))}</strong></div>
         <div class="row-sub">加工 ${fmtNum(input)} · 产出 ${fmtNum(log.OutputQty)} · 损耗 ${fmtNum(stem + other)} · 损耗率 ${lossRate.toFixed(1)}%</div>
       </div>`;
     }).join('');
@@ -1547,20 +1577,45 @@ function applyPermissions() {
       showToast('浏览器阻止了打印窗口，请允许弹窗', 'err');
       return;
     }
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title>
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title>
       <style>
-        @page{size:A4 portrait;margin:8mm}
-        body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:10px;line-height:1.25;width:95mm;max-width:95mm}
-        h1{font-size:14px;margin:0 0 6px}
-        .meta{display:grid;grid-template-columns:26mm 1fr;gap:3px 6px;margin:8px 0}
-        table{width:100%;border-collapse:collapse;margin:8px 0}
-        th,td{border:1px solid #ddd;padding:4px;text-align:left}
-        th{background:#f5f5f5}
-        .sign{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
-        .line{border-top:1px solid #333;padding-top:5px}
-        button{margin-top:10px;padding:6px 10px}
-        @media print{button{display:none}body{width:95mm;max-width:95mm}}
-      </style></head><body>${bodyHtml}<button onclick="window.print()">打印</button></body></html>`);
+        *{box-sizing:border-box}
+        html,body{margin:0;padding:0}
+        body{font-family:Arial,"Noto Sans SC",sans-serif;color:#111;background:#f3f3f3;font-size:11px;line-height:1.28}
+        .sheet{width:105mm;min-height:148.5mm;background:#fff;padding:6mm;overflow:hidden}
+        h1{font-size:16px;margin:0 0 5mm;font-weight:700}
+        .meta{display:grid;grid-template-columns:22mm 1fr;gap:2mm 4mm;margin:0 0 5mm}
+        .meta strong{font-weight:700}
+        .meta span{word-break:break-word}
+        table{width:100%;border-collapse:collapse;margin:0 0 8mm;table-layout:fixed}
+        th,td{border:1px solid #cfcfcf;padding:2.2mm 1.6mm;text-align:left;vertical-align:top;word-break:break-word}
+        th{background:#f3f3f3;font-weight:700}
+        th:nth-child(1),td:nth-child(1){width:38%}
+        th:nth-child(2),td:nth-child(2){width:20%}
+        th:nth-child(3),td:nth-child(3){width:22%}
+        th:nth-child(4),td:nth-child(4){width:20%}
+        .sign{display:grid;grid-template-columns:1fr 1fr;gap:10mm;margin-top:10mm}
+        .line{border-top:1px solid #333;padding-top:2mm;min-height:12mm}
+        .toolbar{position:sticky;bottom:0;padding:10px;background:rgba(243,243,243,.96);border-top:1px solid #ddd}
+        .toolbar button{width:100%;max-width:105mm;padding:12px 14px;border:1px solid #999;border-radius:6px;background:#fff;font-size:16px}
+        @media screen{
+          body{display:flex;flex-direction:column;align-items:flex-start}
+          .sheet{box-shadow:0 1px 8px rgba(0,0,0,.12);transform-origin:top left}
+        }
+        @media screen and (max-width:430px){
+          .sheet{width:100vw;min-height:141.4vw;padding:14px;font-size:11px}
+          h1{font-size:17px;margin-bottom:14px}
+          .meta{grid-template-columns:80px 1fr;gap:6px 10px;margin-bottom:14px}
+          th,td{padding:7px 5px}
+          .sign{gap:26px;margin-top:28px}
+        }
+        @media print{
+          @page{size:A4 portrait;margin:0}
+          body{background:#fff}
+          .toolbar{display:none}
+          .sheet{width:105mm;min-height:148.5mm;padding:6mm;box-shadow:none;page-break-after:always}
+        }
+      </style></head><body><main class="sheet">${bodyHtml}</main><div class="toolbar"><button onclick="window.print()">打印</button></div></body></html>`);
     win.document.close();
     win.focus();
   }
@@ -2008,7 +2063,71 @@ function applyPermissions() {
   // 新增用户（仅 admin）
   // ============================================================
   async function submitAddUser() {
-    showToast('正式版员工账号请在 Supabase Auth 创建，再写入 staff_profiles', 'err');
+    if (!isAdmin()) { showToast('无权操作', 'err'); return; }
+    const email = document.getElementById('au-user').value.trim();
+    const displayName = document.getElementById('au-display').value.trim();
+    const password = document.getElementById('au-pass').value.trim();
+    const role = document.getElementById('au-role').value;
+    if (!email || !displayName || !password || !role) {
+      showToast('请填写所有员工资料', 'err');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showToast('请输入正确的 Email', 'err');
+      return;
+    }
+    if (password.length < 6) {
+      showToast('密码至少需要 6 位', 'err');
+      return;
+    }
+
+    const btn = document.getElementById('btn-adduser');
+    btn.disabled = true;
+    btn.textContent = '添加中...';
+    try {
+      const signupRes = await fetch(AUTH + '/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY
+        },
+        body: JSON.stringify({ email, password })
+      });
+      if (!signupRes.ok) {
+        const signupText = await signupRes.text();
+        if (!signupText.includes('already registered') && !signupText.includes('already exists')) {
+          throw new Error(signupText);
+        }
+      }
+
+      await createStaffProfileWithRetry({
+        p_email: email,
+        p_display_name: displayName,
+        p_role: role,
+        p_active: true
+      });
+
+      showToast('用户已创建。如无法登录，请检查邮箱确认设置。', 'ok');
+      document.getElementById('au-user').value = '';
+      document.getElementById('au-display').value = '';
+      document.getElementById('au-pass').value = '';
+      document.getElementById('au-role').value = 'sales';
+      closeModal();
+    } catch (e) {
+      const msg = getErrorMessage(e);
+      if (msg.includes('row-level security') || msg.includes('permission denied')) {
+        showToast('创建失败：请先执行员工创建 SQL', 'err');
+      } else if (msg.includes('User already registered') || msg.includes('already registered')) {
+        showToast('这个 Email 已经注册过', 'err');
+      } else if (msg.includes('Auth user not found')) {
+        showToast('Auth 账号未创建，请检查 Supabase 是否允许注册', 'err');
+      } else {
+        showToast('创建失败: ' + msg, 'err');
+      }
+    }
+    btn.disabled = false;
+    btn.textContent = '添加用户';
   }
 
   // ============================================================
@@ -2061,7 +2180,9 @@ function applyPermissions() {
 
     // 添加用户 / 修改密码按钮
     document.getElementById('btn-add-user').addEventListener('click', function() {
-      showToast('正式版请在 Supabase Auth 建员工账号', 'err');
+      if (!isAdmin()) { showToast('无权操作', 'err'); return; }
+      state.currentModal = 'modal-adduser';
+      document.getElementById('modal-adduser').classList.add('open');
     });
     document.getElementById('btn-change-pw').addEventListener('click', function() {
       state.currentModal = 'modal-changepw';
