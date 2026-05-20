@@ -72,6 +72,7 @@ html, body {
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
+  overflow-x: auto;
   padding-bottom: env(safe-area-inset-bottom);
   position: fixed;
   bottom: 0;
@@ -83,7 +84,7 @@ html, body {
 }
 
 .nav-btn {
-  flex: 1;
+  flex: 0 0 56px;
   padding: 10px 4px 10px;
   border: none;
   background: none;
@@ -97,6 +98,40 @@ html, body {
 }
 .nav-btn.active { color: var(--green); }
 .nav-icon { font-size: 22px; }
+
+.export-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.export-btn {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.export-btn:active {
+  background: var(--green-light);
+}
+
+.ac-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--amber-light);
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.45;
+}
 
 /* ===== 通用组件 ===== */
 .section-title {

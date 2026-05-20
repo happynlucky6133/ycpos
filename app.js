@@ -25,6 +25,7 @@
     orderDraft: [],
     stockInFilter: { from: '', to: '' },
     orderFilter: { from: '', to: '' },
+    autocountFilter: { from: '', to: '' },
     crFilter: { from: '', to: '', status: '' },
     customerRequests: [],
     customerRequestItems: [],
@@ -142,6 +143,8 @@ function applyPermissions() {
     // 审计日志页仅 admin 可见
     const auditNav = document.getElementById('nav-audit');
     if (auditNav) auditNav.style.display = isAdmin() ? '' : 'none';
+    const autoCountNav = document.getElementById('nav-autocount');
+    if (autoCountNav) autoCountNav.style.display = isAdmin() ? '' : 'none';
 
     // 控制 FAB
     const fab = document.getElementById('fab');
@@ -505,7 +508,7 @@ function applyPermissions() {
   }
 
   function formatProductNameGrade(p) {
-    if (!p) return '';
+    if (!p || !p.ProductName) return '';
     return p.ProductName + (p.Grade ? ' ' + p.Grade : '');
   }
 
@@ -670,6 +673,7 @@ function applyPermissions() {
     else if (page === 'suppliers') renderSuppliers();
     else if (page === 'customers') renderCustomers();
     else if (page === 'customer-requests') renderCustomerRequests();
+    else if (page === 'autocount') renderAutoCountExport();
     else if (page === 'audit')     loadAuditLogs();
   }
 
@@ -1700,6 +1704,220 @@ function applyPermissions() {
     attachDeleteHandlers(container);
   }
 
+  // ============================================================
+  // AutoCount Excel 导出（人工 Import From Excel 第一版）
+  // ============================================================
+  function renderAutoCountExport() {
+    const container = document.getElementById('autocount-export-panel');
+    if (!container) return;
+    if (!isAdmin()) {
+      container.innerHTML = '<div class="empty">只有 Admin 可以导出 AutoCount 文件</div>';
+      return;
+    }
+
+    const orders = getAutoCountSalesRows();
+    const purchases = getAutoCountPurchaseRows();
+    const missing = getAutoCountMissingMappings();
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="row-title">基础资料</div>
+        <div class="row-sub">先导入基础资料，再导入 A/R 或 A/P 单据。第一版为标准 Excel 草稿，等 AutoCount 模板确认后再锁定列名。</div>
+        <div class="export-grid">
+          <button class="export-btn" data-ac-export="debtors">Debtor 客户 (${state.customers.size})</button>
+          <button class="export-btn" data-ac-export="creditors">Creditor 供应商 (${state.suppliers.size})</button>
+          <button class="export-btn" data-ac-export="stock-items">Stock Item 产品 (${state.products.size})</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row-title">单据</div>
+        <div class="row-sub">A/R 只导出已完成订单；A/P 导出日期范围内进货记录。进货若没有成本价，会留空给会计导入前填写。</div>
+        <div class="export-grid">
+          <button class="export-btn" data-ac-export="ar-invoice">A/R Invoice 已完成订单 (${orders.length})</button>
+          <button class="export-btn" data-ac-export="ap-invoice">A/P Invoice 进货 (${purchases.length})</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row-title">导入提醒</div>
+        <div class="row-sub">建议文件名保留 YCPos 日期和批次，导入 AutoCount 前先核对总行数、总金额、客户/供应商 code。</div>
+        ${missing.length ? '<div class="ac-warning">' + missing.map(escapeHTML).join('<br>') + '</div>' : '<div class="row-sub">AutoCount code 暂时使用 YCPos ID 作为 fallback。</div>'}
+      </div>
+    `;
+
+    container.querySelectorAll('[data-ac-export]').forEach(btn => {
+      btn.addEventListener('click', () => exportAutoCountFile(btn.dataset.acExport));
+    });
+  }
+
+  function getAutoCountCode(entity, field, fallback) {
+    return (entity && String(entity[field] || '').trim()) || fallback || '';
+  }
+
+  function getAutoCountItemCode(product) {
+    return getAutoCountCode(product, 'AutoCountItemCode', product ? product.ProductID : '');
+  }
+
+  function getAutoCountSalesRows() {
+    return state.orders
+      .filter(o => (o.Status || '') === 'done' && inDateRange(o.Date, state.autocountFilter))
+      .flatMap(o => {
+        const customer = state.customers.get(o.CustomerID) || {};
+        const debtorCode = getAutoCountCode(customer, 'AutoCountDebtorCode', o.CustomerID);
+        const lines = state.orderDetails.get(o.POID) || [];
+        return lines.map((d, index) => {
+          const product = state.products.get(d.ProductID) || {};
+          const qty = Number(d.QTY || 0);
+          const price = Number(d.UnitPrice || 0);
+          return {
+            DocNo: o.AutoCountDocNo || '',
+            DocDate: getDateText(o.Date),
+            DebtorCode: debtorCode,
+            DebtorName: customer.CustomerName || o.CustomerName || o.CustomerID,
+            ItemCode: getAutoCountItemCode(product),
+            Description: formatProductNameGrade(product) || d.ProductID,
+            Qty: qty,
+            UOM: product.Unit || 'kg',
+            UnitPrice: price,
+            LineTotal: Number(d.LineTotal || qty * price),
+            Remark: [o.Note || '', 'YCPos ' + o.POID, 'Line ' + (index + 1)].filter(Boolean).join(' | '),
+            YCPosOrderID: o.POID
+          };
+        });
+      });
+  }
+
+  function getAutoCountPurchaseRows() {
+    return state.stockIns
+      .filter(s => inDateRange(s.Date, state.autocountFilter))
+      .map(s => {
+        const d = state.stockInDetails.get(s.StockInID) || {};
+        const supplier = state.suppliers.get(s.SupplierID) || {};
+        const product = state.products.get(d.ProductID) || {};
+        return {
+          DocNo: s.AutoCountDocNo || '',
+          DocDate: getDateText(s.Date),
+          CreditorCode: getAutoCountCode(supplier, 'AutoCountCreditorCode', s.SupplierID),
+          CreditorName: supplier.SupplierName || s.SupplierID,
+          ItemCode: getAutoCountItemCode(product),
+          Description: formatProductNameGrade(product) || d.ProductID || '',
+          Qty: Number(d.Qty || 0),
+          UOM: product.Unit || 'kg',
+          UnitCost: '',
+          LineTotal: '',
+          Remark: [s.Note || '', 'YCPos ' + s.StockInID].filter(Boolean).join(' | '),
+          YCPosStockInID: s.StockInID
+        };
+      });
+  }
+
+  function getAutoCountMissingMappings() {
+    const messages = [];
+    const missingDebtors = Array.from(state.customers.values()).filter(c => !c.AutoCountDebtorCode).length;
+    const missingCreditors = Array.from(state.suppliers.values()).filter(s => !s.AutoCountCreditorCode).length;
+    const missingItems = Array.from(state.products.values()).filter(p => !p.AutoCountItemCode).length;
+    if (missingDebtors) messages.push('客户 AutoCountDebtorCode 未填写：' + missingDebtors + ' 个，将暂用 CustomerID。');
+    if (missingCreditors) messages.push('供应商 AutoCountCreditorCode 未填写：' + missingCreditors + ' 个，将暂用 SupplierID。');
+    if (missingItems) messages.push('产品 AutoCountItemCode 未填写：' + missingItems + ' 个，将暂用 ProductID。');
+    return messages;
+  }
+
+  function exportAutoCountFile(type) {
+    if (!isAdmin()) {
+      showToast('只有 Admin 可以导出', 'err');
+      return;
+    }
+
+    const datasets = {
+      debtors: {
+        name: 'AutoCount_Debtor',
+        rows: Array.from(state.customers.values()).map(c => ({
+          DebtorCode: getAutoCountCode(c, 'AutoCountDebtorCode', c.CustomerID),
+          DebtorName: c.CustomerName || '',
+          Phone: c.Phone || '',
+          Note: c.Note || '',
+          YCPosCustomerID: c.CustomerID
+        }))
+      },
+      creditors: {
+        name: 'AutoCount_Creditor',
+        rows: Array.from(state.suppliers.values()).map(s => ({
+          CreditorCode: getAutoCountCode(s, 'AutoCountCreditorCode', s.SupplierID),
+          CreditorName: s.SupplierName || '',
+          Phone: s.Phone || '',
+          Note: s.Note || '',
+          YCPosSupplierID: s.SupplierID
+        }))
+      },
+      'stock-items': {
+        name: 'AutoCount_StockItem',
+        rows: Array.from(state.products.values()).map(p => ({
+          ItemCode: getAutoCountItemCode(p),
+          Description: formatProductNameGrade(p),
+          ProductName: p.ProductName || '',
+          Grade: p.Grade || '',
+          UOM: p.Unit || 'kg',
+          CurrentStock: Number(p.StockBalance || 0),
+          Note: p.Note || '',
+          YCPosProductID: p.ProductID
+        }))
+      },
+      'ar-invoice': {
+        name: 'AutoCount_AR_Invoice',
+        rows: getAutoCountSalesRows()
+      },
+      'ap-invoice': {
+        name: 'AutoCount_AP_Invoice',
+        rows: getAutoCountPurchaseRows()
+      }
+    };
+
+    const dataset = datasets[type];
+    if (!dataset) return;
+    if (!dataset.rows.length) {
+      showToast('没有可导出的资料', 'err');
+      return;
+    }
+    downloadExcelXml(dataset.name + '_' + getTodayStamp() + '.xls', dataset.name, dataset.rows);
+    showToast('已导出 ' + dataset.rows.length + ' 行', 'ok');
+  }
+
+  function getTodayStamp() {
+    return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  }
+
+  function downloadExcelXml(filename, sheetName, rows) {
+    const columns = Object.keys(rows[0] || {});
+    const tableRows = [
+      columns,
+      ...rows.map(row => columns.map(col => row[col] == null ? '' : row[col]))
+    ];
+    const xmlRows = tableRows.map(row =>
+      '<Row>' + row.map(cell => {
+        const value = String(cell).replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[ch]);
+        const type = value !== '' && isFinite(value) && !/^0\d+/.test(value) ? 'Number' : 'String';
+        return '<Cell><Data ss:Type="' + type + '">' + value + '</Data></Cell>';
+      }).join('') + '</Row>'
+    ).join('');
+    const xml = '<?xml version="1.0"?>' +
+      '<?mso-application progid="Excel.Sheet"?>' +
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" ' +
+      'xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+      'xmlns:x="urn:schemas-microsoft-com:office:excel" ' +
+      'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+      '<Worksheet ss:Name="' + sheetName.replace(/[\\/?*[\]:]/g, '').slice(0, 31) + '"><Table>' +
+      xmlRows +
+      '</Table></Worksheet></Workbook>';
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   const debouncedRenderProducts = debounce(renderProducts, 250);
   const debouncedRenderSuppliers = debounce(renderSuppliers, 250);
   const debouncedRenderCustomers = debounce(renderCustomers, 250);
@@ -2248,6 +2466,20 @@ function applyPermissions() {
       document.getElementById('cr-date-to').value = '';
       document.getElementById('cr-status-filter').value = '';
       renderCustomerRequests();
+    });
+    document.getElementById('ac-date-from').addEventListener('change', function() {
+      state.autocountFilter.from = this.value;
+      renderAutoCountExport();
+    });
+    document.getElementById('ac-date-to').addEventListener('change', function() {
+      state.autocountFilter.to = this.value;
+      renderAutoCountExport();
+    });
+    document.getElementById('btn-ac-clear').addEventListener('click', function() {
+      state.autocountFilter = { from: '', to: '' };
+      document.getElementById('ac-date-from').value = '';
+      document.getElementById('ac-date-to').value = '';
+      renderAutoCountExport();
     });
 
     // 产品选择 change 事件 → 更新数量单位标签

@@ -161,6 +161,17 @@
       </div>
       <div id="cr-requests-list"><div class="loading">加载中...</div></div>
     </div>
+
+    <!-- AutoCount 导出 -->
+    <div class="page" id="page-autocount">
+      <div class="section-title">AutoCount Excel 导出</div>
+      <div class="filter-row">
+        <input type="date" id="ac-date-from" title="开始日期">
+        <input type="date" id="ac-date-to" title="结束日期">
+        <button class="btn-secondary inline" id="btn-ac-clear" type="button">清除</button>
+      </div>
+      <div id="autocount-export-panel"></div>
+    </div>
   </div>
 
   <div class="nav" id="nav-bar">
@@ -172,6 +183,7 @@
     <button class="nav-btn" data-page="suppliers"><span class="nav-icon">🏭</span>供应商</button>
     <button class="nav-btn" data-page="customers"><span class="nav-icon">👥</span>客户</button>
     <button class="nav-btn" data-page="customer-requests"><span class="nav-icon">📝</span>客户申请</button>
+    <button class="nav-btn" data-page="autocount" id="nav-autocount" style="display:none"><span class="nav-icon">⬇️</span>导出</button>
     <button class="nav-btn" data-page="audit" id="nav-audit" style="display:none"><span class="nav-icon">📜</span>审计</button>
   </div>
 </div>
